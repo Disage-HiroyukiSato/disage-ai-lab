@@ -297,7 +297,6 @@ models/*
 # Keep model directory structure
 
 !models/.gitkeep
-!models/*/
 !models/*/.gitkeep
 
 # Common model formats
@@ -306,6 +305,7 @@ models/*
 *.safetensors
 *.bin
 *.onnx
+*.onnx_data
 *.pt
 *.pth
 

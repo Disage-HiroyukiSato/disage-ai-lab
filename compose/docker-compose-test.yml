@@ -1,0 +1,40 @@
+name: ${COMPOSE_PROJECT_NAME}-test
+
+services:
+
+  ########################################################
+  # RAG API Test
+  ########################################################
+
+  rag-api-test:
+
+    build:
+      context: ..
+      dockerfile: services/rag_api/Dockerfile.test
+
+    container_name: ${RAG_CONTAINER_NAME}-test
+
+    env_file:
+      - ../config/app.env
+      - ../config/rag.env
+
+    volumes:
+      - ../config:/app/config:ro
+      - ../tests:/app/tests:ro
+      - ../models:/models:ro
+
+    depends_on:
+      llama-cpp:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      embedding-api:
+        condition: service_healthy
+
+    networks:
+      - ai-network
+
+    command:
+      - pytest
+      - -v
+      - /app/tests

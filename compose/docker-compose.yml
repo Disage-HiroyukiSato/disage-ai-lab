@@ -1,0 +1,206 @@
+name: ${COMPOSE_PROJECT_NAME}
+
+services:
+
+  ########################################################
+  # LLM (llama.cpp)
+  ########################################################
+
+  llama-cpp:
+
+    image: ghcr.io/ggml-org/llama.cpp:server
+
+    container_name: ${LLM_CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    env_file:
+      - ../config/app.env
+
+    ports:
+      - "${LLAMA_PORT}:8080"
+
+    volumes:
+      - ../models:/models
+
+    command:
+      - -m
+      - /models/llm/${LLM_MODEL}
+      - -c
+      - "${CONTEXT_SIZE}"
+      - -t
+      - "${THREAD_COUNT}"
+      - -ngl
+      - "${GPU_LAYER}"
+      - -np
+      - "1"
+      - --temp
+      - "${TEMPERATURE}"
+      - --top-p
+      - "${TOP_P}"
+      - --repeat-penalty
+      - "${REPEAT_PENALTY}"
+      - --chat-template
+      - chatml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://localhost:8080/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 360s
+
+    stop_grace_period: 60s
+
+    networks:
+      - ai-network
+
+  ########################################################
+  # ChromaDB
+  ########################################################
+
+  chromadb:
+
+    image: chromadb/chroma:1.0.15
+
+    container_name: ${CHROMA_CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    ports:
+      - "${CHROMA_PORT}:8000"
+
+    volumes:
+      - ../data/chromadb:/data
+
+    networks:
+      - ai-network
+
+  ########################################################
+  # Embedding API
+  ########################################################
+
+  embedding-api:
+
+    build:
+      context: ../services/embedding_api
+      dockerfile: Dockerfile
+
+    container_name: ${EMBEDDING_CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    env_file:
+      - ../config/app.env
+      - ../config/rag.env
+
+    volumes:
+      - ../config:/app/config:ro
+      - ../models:/models:ro
+
+    ports:
+      - "${EMBEDDING_PORT}:8010"
+
+    depends_on:
+      chromadb:
+        condition: service_started
+
+    healthcheck:
+
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"
+        ]
+
+      interval: 30s
+
+      timeout: 10s
+
+      retries: 20
+
+      start_period: 120s
+
+    networks:
+      - ai-network
+
+  ########################################################
+  # RAG API
+  ########################################################
+
+  rag-api:
+
+    build:
+      context: ../services/rag_api
+
+    container_name: ${RAG_CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    env_file:
+      - ../config/app.env
+      - ../config/rag.env
+
+    volumes:
+      - ../config:/app/config:ro
+
+    ports:
+      - "${RAG_API_PORT}:8000"
+
+    depends_on:
+      llama-cpp:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      embedding-api:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://localhost:8000/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+    networks:
+      - ai-network
+
+########################################################
+# Volumes
+########################################################
+
+volumes:
+
+  chromadb-data:
+    name: ${CHROMA_VOLUME}
+
+
+########################################################
+# Networks
+########################################################
+
+networks:
+
+  ai-network:
+    name: ${DOCKER_NETWORK}
+    driver: bridge

@@ -1,0 +1,16 @@
+curl -X POST http://localhost:8010/documents ^
+-H "Content-Type: application/json" ^
+-d "{\"document_id\":\"gundom-001\",\"text\":\"ガンダムは一般的にRX-78-2ガンダムで地球連邦軍の試作モビルスーツです。パイロットはアムロ・レイです。\"}"
+
+
+curl -X POST http://localhost:8010/query ^
+-H "Content-Type: application/json" ^
+-d "{\"question\":\"ガンダムとは？\"}"
+
+curl -X POST http://localhost:8010/query ^
+-H "Content-Type: application/json" ^
+-d "{\"question\":\"ガンダムのパイロットを答えて。\"}"
+
+curl -X POST http://localhost:8010/query ^
+-H "Content-Type: application/json" ^
+-d "{\"question\":\"PythonのGILとは？\"}"

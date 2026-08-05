@@ -216,3 +216,234 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+
+
+
+# =========================================================
+
+# DisageAI / ai-lab_rag_v1
+
+# Git Ignore
+
+# =========================================================
+
+# =========================================================
+
+# Environment / Secrets
+
+# =========================================================
+
+# Local environment files
+
+.env
+.env.*
+!.env.example
+
+# Local configuration / credentials
+
+*.secret
+*.secrets
+*.key
+*.pem
+
+# =========================================================
+
+# Python
+
+# =========================================================
+
+**pycache**/
+*.py[cod]
+*$py.class
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+*.egg-info/
+dist/
+build/
+
+# =========================================================
+
+# Node.js / Next.js
+
+# =========================================================
+
+node_modules/
+.next/
+out/
+.turbo/
+
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# =========================================================
+
+# AI Models
+
+# =========================================================
+
+# Model files must not be committed to Git
+
+models/*
+
+# Keep model directory structure
+
+!models/.gitkeep
+!models/*/
+!models/*/.gitkeep
+
+# Common model formats
+
+*.gguf
+*.safetensors
+*.bin
+*.onnx
+*.pt
+*.pth
+
+# =========================================================
+
+# Runtime Data
+
+# =========================================================
+
+# Runtime-generated data
+
+data/*
+
+# Keep data directory structure
+
+!data/.gitkeep
+!data/*/
+!data/*/.gitkeep
+
+# ChromaDB
+
+data/chromadb/
+data/chromadb/**/*
+
+# SQLite databases
+
+*.sqlite
+*.sqlite3
+*.db
+
+# =========================================================
+
+# RAG / Uploaded Documents
+
+# =========================================================
+
+# Uploaded / processed documents
+
+data/documents/
+data/uploads/
+data/input/
+data/output/
+data/processed/
+
+# Audio / transcription / reports
+
+data/audio/
+data/transcript/
+data/reports/
+
+# =========================================================
+
+# Logs
+
+# =========================================================
+
+*.log
+logs/
+log/
+
+# =========================================================
+
+# Temporary Files
+
+# =========================================================
+
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# =========================================================
+
+# Docker
+
+# =========================================================
+
+# Docker local override files
+
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Docker build/runtime artifacts
+
+.docker/
+
+# =========================================================
+
+# IDE / Editor
+
+# =========================================================
+
+.vscode/
+.idea/
+
+# VS Code local settings
+
+*.code-workspace
+
+# =========================================================
+
+# OS
+
+# =========================================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================================================
+
+# Project Backup
+
+# =========================================================
+
+backup/
+backups/
+
+# =========================================================
+
+# Local Test / Development Files
+
+# =========================================================
+
+test-output/
+test-results/
+coverage/
+
+# =========================================================
+
+# Generated Documentation
+
+# =========================================================
+
+*.generated.md
+*.generated.html
+*.generated.json

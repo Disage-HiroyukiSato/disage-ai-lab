@@ -1,0 +1,121 @@
+{
+    "javascript": [
+        "js",
+        "java script",
+        "java-script"
+    ],
+    "js": [
+        "javascript",
+        "java script",
+        "java-script"
+    ],
+    "java script": [
+        "javascript",
+        "js",
+        "java-script"
+    ],
+    "html": [
+        "hypertext markup language"
+    ],
+    "css": [
+        "cascading style sheets"
+    ],
+    "sql": [
+        "structured query language"
+    ],
+    "db": [
+        "database"
+    ],
+    "rdb": [
+        "relational database"
+    ],
+    "rdbms": [
+        "relational database management system"
+    ],
+    "ai": [
+        "artificial intelligence",
+        "生成ai"
+    ],
+    "llm": [
+        "large language model",
+        "大規模言語モデル"
+    ],
+    "rag": [
+        "retrieval augmented generation",
+        "検索拡張生成"
+    ],
+    "api": [
+        "application programming interface"
+    ],
+    "rest": [
+        "rest api",
+        "restful api"
+    ],
+    "json": [
+        "javascript object notation"
+    ],
+    "xml": [
+        "extensible markup language"
+    ],
+    "ui": [
+        "user interface"
+    ],
+    "ux": [
+        "user experience"
+    ],
+    "gpu": [
+        "graphics processing unit"
+    ],
+    "cpu": [
+        "central processing unit"
+    ],
+    "os": [
+        "operating system"
+    ],
+    "docker": [
+        "docker container"
+    ],
+    "k8s": [
+        "kubernetes"
+    ],
+    "vm": [
+        "virtual machine"
+    ],
+    "vlan": [
+        "virtual lan"
+    ],
+    "dns": [
+        "domain name system"
+    ],
+    "dhcp": [
+        "dynamic host configuration protocol"
+    ],
+    "tcp": [
+        "transmission control protocol"
+    ],
+    "udp": [
+        "user datagram protocol"
+    ],
+    "http": [
+        "hypertext transfer protocol"
+    ],
+    "https": [
+        "http secure"
+    ],
+    "ssl": [
+        "secure sockets layer"
+    ],
+    "tls": [
+        "transport layer security"
+    ],
+    "jwt": [
+        "json web token"
+    ],
+    "oauth": [
+        "oauth2",
+        "open authorization"
+    ],
+    "oidc": [
+        "openid connect"
+    ]
+}

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>LLM構成パラメータ解説（Open WebUI / llama.cpp）</title>
+<style>
+  body { font-family: Arial, sans-serif; line-height: 1.7; margin: 40px; }
+  h1, h2, h3 { color: #333; }
+  code { background: #f4f4f4; padding: 4px 6px; border-radius: 4px; }
+  pre { background: #f4f4f4; padding: 12px; border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+  th, td { border: 1px solid #ccc; padding: 8px; }
+  th { background: #eee; }
+</style>
+</head>
+<body>
+
+<h1>LLM構成パラメータ解説（Open WebUI / llama.cpp）</h1>
+
+<h2>① 最重要：max_tokens（出力上限）</h2>
+<p>モデルが生成できる <strong>出力トークン数の上限</strong> を決める設定です。</p>
+
+<p>例：</p>
+<pre>max_tokens = 512 → 約512トークンで回答が打ち切られる</pre>
+
+<p>これを以下のように増やすことで長文生成が可能になります：</p>
+<ul>
+  <li>2048</li>
+  <li>4096</li>
+  <li>8192</li>
+</ul>
+
+<p>Open WebUIでは <code>-1</code> を指定すると「無制限（サーバー側が許す範囲）」として扱われます。</p>
+
+<h3>Open WebUIでの設定手順</h3>
+<ol>
+  <li>チャット画面右上の <strong>Parameters</strong> を開く</li>
+  <li><strong>Max Tokens</strong> を 4096 や 8192 に変更</li>
+  <li>モデルごとの Preset に保存可能</li>
+</ol>
+
+<hr>
+
+<h2>② llama.cpp の Context サイズ（-c）</h2>
+<p>コンテキストウィンドウは、以下すべてを含む「総トークン数の上限」です：</p>
+
+<ul>
+  <li>入力（質問）</li>
+  <li>システムプロンプト</li>
+  <li>RAG結果</li>
+  <li>回答</li>
+</ul>
+
+<p>現在の設定は <code>-c 2048</code> で、長文生成には不足しています。</p>
+
+<p>例：</p>
+<pre>-c 8192 → かなり余裕がある
+RTX3060なら 8192 は十分現実的
+余裕があれば 16384 も可能
+</pre>
+
+<p>コンテキスト不足は以下のような現象を引き起こします：</p>
+<ul>
+  <li>回答が途中で終了する</li>
+  <li>古い会話が消える</li>
+  <li>RAGの内容が欠落する</li>
+</ul>
+
+<hr>
+
+<h2>③ HTTPタイムアウト（llama.cpp側）</h2>
+<p>生成が長時間かかる場合、タイムアウトにより途中で止まることがあります。</p>
+
+<p>llama.cpp には <code>--timeout</code> があり、例：</p>
+<pre>--timeout 3600 → 1時間待つ（デフォルトは600秒）</pre>
+
+<p>docker-compose の例：</p>
+<pre>
+command:
+  - --timeout
+  - "3600"
+</pre>
+
+<hr>
+
+<h2>④ Open WebUI側のタイムアウト</h2>
+<p>Open WebUIにもタイムアウト設定がありますが、生成停止の原因の多くは：</p>
+
+<ul>
+  <li>llama.cpp の <code>--timeout</code></li>
+  <li><code>max_tokens</code> の不足</li>
+</ul>
+
+<p>モデル一覧取得用の <code>AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST</code> とは別です。</p>
+
+<hr>
+
+<h2>⑤ ストリーミング（stream=true）</h2>
+<p>Open WebUIはストリーミング受信のため、生成が30分かかっても途中で止まりません。</p>
+<p>ローカル構成では非常に有利です。</p>
+
+<hr>
+
+<h2>あなたの構成向け推奨設定（RTX3060 / Qwen2.5 7B）</h2>
+
+<p>docker-compose の例：</p>
+<pre>
+command:
+  - -m
+  - /models/qwen2.5-7b-instruct-q4_k_m.gguf
+
+  - -c
+  - "8192"
+
+  - --timeout
+  - "3600"
+
+  - -np
+  - "1"
+
+  - --temp
+  - "0.2"
+
+  - --top-p
+  - "0.9"
+
+  - --repeat-penalty
+  - "1.1"
+
+  - --chat-template
+  - chatml
+</pre>
+
+<p>Open WebUI側：</p>
+<ul>
+  <li>Max Tokens：4096〜8192</li>
+</ul>
+
+<h3>コンテキストと出力のバランス</h3>
+<p>例：</p>
+<pre>
+Context 8192
+入力 3000
+RAG 2500
+回答 4096
+→ 合計 9600 → コンテキスト超過 → 回答が途中で切れる
+</pre>
+
+<p>そのため：</p>
+<ul>
+  <li>Context（-c）：16384〜32768</li>
+  <li>Max Tokens：4096〜8192</li>
+  <li>Timeout：3600秒</li>
+  <li>Parallel（-np）：1</li>
+  <li>ストリーミング：有効</li>
+</ul>
+
+<hr>
+
+<h2>DisageAI向け推奨設定（長文生成用途）</h2>
+
+<table>
+  <tr><th>項目</th><th>推奨値</th></tr>
+  <tr><td>Context (-c)</td><td>16384（将来的に32768）</td></tr>
+  <tr><td>Max Tokens</td><td>8192</td></tr>
+  <tr><td>HTTP Timeout</td><td>3600秒</td></tr>
+  <tr><td>Parallel (-np)</td><td>1</td></tr>
+  <tr><td>Temperature</td><td>0.2</td></tr>
+  <tr><td>Stream</td><td>有効</td></tr>
+  <tr><td>RAGチャンク</td><td>1000〜1200文字</td></tr>
+  <tr><td>GPU Offload</td><td>RTX3060で可能な範囲まで</td></tr>
+</table>
+
+</body>
+</html>

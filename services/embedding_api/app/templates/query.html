@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>Query</title>
+
+    <link rel="stylesheet" href="/static/css/style.css">
+
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>質問</h1>
+
+<label>質問内容</label>
+
+<input
+
+    id="question"
+
+    type="text"
+
+    placeholder="HTMLとは？"
+
+/>
+
+<button
+
+    onclick="askQuestion()"
+
+>
+
+質問する
+
+</button>
+
+<h2>回答</h2>
+
+<pre id="answer"></pre>
+
+<h2>検索情報</h2>
+
+<table>
+
+<tr>
+
+<td>検索時間</td>
+
+<td id="elapsed"></td>
+
+</tr>
+
+<tr>
+
+<td>取得件数</td>
+
+<td id="retrieved"></td>
+
+</tr>
+
+</table>
+
+<h2>検索結果</h2>
+
+<div id="documents"></div>
+
+<p>
+
+<a href="/">
+
+戻る
+
+</a>
+
+</p>
+
+<script src="/static/js/query.js"></script>
+
+</div>
+
+</body>
+
+</html>

@@ -297,3 +297,85 @@ def test_query_calls_llm_only_after_reranker(
         "prompt",
         "llm"
     ]
+
+def test_query_context_uses_reranked_documents(
+    monkeypatch
+):
+
+    item1 = create_item(
+        "doc-001",
+        1,
+        "検索結果A"
+    )
+
+    item2 = create_item(
+        "doc-002",
+        1,
+        "検索結果B"
+    )
+
+    monkeypatch.setattr(
+        "app.services.query_service."
+        "multi_query_retrieval_service.search",
+        lambda question, limit: RetrievalResult(
+            query=question,
+            total=2,
+            elapsed_ms=10,
+            items=[
+                item1,
+                item2
+            ]
+        )
+    )
+
+    def mock_rerank(
+        question,
+        items,
+        limit
+    ):
+
+        return [
+            item2,
+            item1
+        ]
+
+    monkeypatch.setattr(
+        "app.services.query_service."
+        "reranker_service.rerank",
+        mock_rerank
+    )
+
+    captured = {}
+
+    def mock_prompt_build(
+        question,
+        contexts
+    ):
+
+        captured["question"] = question
+        captured["contexts"] = contexts
+
+        return "test prompt"
+
+    monkeypatch.setattr(
+        "app.services.query_service."
+        "prompt_builder.build",
+        mock_prompt_build
+    )
+
+    monkeypatch.setattr(
+        "app.services.query_service."
+        "llm_service.ask",
+        lambda prompt: "test answer"
+    )
+
+    query_service.ask(
+        "javascriptについて教えて"
+    )
+
+    assert captured["question"] == "javascriptについて教えて"
+
+    assert captured["contexts"] == [
+        "検索結果B",
+        "検索結果A"
+    ]

@@ -1,18 +1,18 @@
-name: ${COMPOSE_PROJECT_NAME}-test
+﻿name: ${COMPOSE_PROJECT_NAME}-test
 
 services:
 
   ########################################################
-  # RAG API Test
+  # Embedding API Test
   ########################################################
 
-  rag-api-test:
+  embedding-api-test:
 
     build:
       context: ..
-      dockerfile: services/rag_api/Dockerfile.test
+      dockerfile: services/embedding_api/Dockerfile.test
 
-    container_name: ${RAG_CONTAINER_NAME}-test
+    container_name: ${EMBEDDING_CONTAINER_NAME}-test
 
     env_file:
       - ../config/app.env
@@ -24,12 +24,8 @@ services:
       - ../models:/models:ro
 
     depends_on:
-      llama-cpp:
-        condition: service_healthy
       chromadb:
         condition: service_started
-      embedding-api:
-        condition: service_healthy
 
     networks:
       - ai-network
@@ -38,3 +34,31 @@ services:
       - pytest
       - -v
       - /app/tests
+
+  ########################################################
+  # ChromaDB
+  ########################################################
+
+  chromadb:
+
+    image: chromadb/chroma:1.0.15
+
+    container_name: ${CHROMA_CONTAINER_NAME}-test
+
+    volumes:
+      - ../data/chromadb:/data
+
+    networks:
+      - ai-network
+
+########################################################
+# Networks
+########################################################
+
+networks:
+
+  ai-network:
+
+    name: ${DOCKER_NETWORK}-test
+
+    driver: bridge

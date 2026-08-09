@@ -1,0 +1,61 @@
+{
+    "documents": [
+        {
+            "document_id": "gundom-001",
+            "title": "ガンダム",
+            "category": "Anime",
+            "keywords": "ガンダム,アムロ",
+            "text": "ガンダムは一般的にRX-78-2ガンダムで地球連邦軍の試作モビルスーツです。パイロットはアムロ・レイです。"
+        },
+        {
+            "document_id": "eval-002",
+            "title": "Python GIL",
+            "category": "Tech",
+            "keywords": "python,gil",
+            "text": "PythonのGIL（グローバルインタプリタロック）は、1つのプロセス内で複数スレッドが同時にPythonバイトコードを実行できないようにする仕組みです。これによりCPythonの内部状態はスレッドセーフに保たれますが、CPUバウンドな処理ではマルチスレッドの並列性が制限されます。"
+        },
+        {
+            "document_id": "eval-003",
+            "title": "Docker と仮想マシン",
+            "category": "Tech",
+            "keywords": "docker,vm,仮想化",
+            "text": "Dockerはコンテナ型の仮想化技術であり、ホストOSのカーネルを共有しながらアプリケーションを隔離して実行します。一方、仮想マシン（VM）はハイパーバイザー上でゲストOSごと仮想化するため、起動が重くリソース消費も大きくなります。Dockerは軽量で起動が高速な点が特徴です。"
+        },
+        {
+            "document_id": "eval-004",
+            "title": "RAGとは",
+            "category": "Tech",
+            "keywords": "rag,検索拡張生成",
+            "text": "RAG（Retrieval Augmented Generation、検索拡張生成）は、大規模言語モデルが回答を生成する前に外部知識ベースから関連文書を検索し、その内容を根拠として回答に組み込む手法です。モデル単体の知識に依存せず、最新情報や社内文書などに基づいた回答が可能になります。"
+        },
+        {
+            "document_id": "eval-005",
+            "title": "HTTPとHTTPS",
+            "category": "Tech",
+            "keywords": "http,https",
+            "text": "HTTPはWebブラウザとサーバー間でデータをやり取りするための通信プロトコルです。HTTPS（HTTP Secure）はHTTPにSSL/TLSによる暗号化を加えたもので、通信内容の盗聴や改ざんを防ぎます。現在ではほとんどのWebサイトがHTTPSを採用しています。"
+        }
+    ],
+    "cases": [
+        {
+            "question": "ガンダムのパイロットは誰ですか？",
+            "relevant_document_ids": ["gundom-001"]
+        },
+        {
+            "question": "PythonのGILとは何ですか？",
+            "relevant_document_ids": ["eval-002"]
+        },
+        {
+            "question": "Dockerと仮想マシンはどう違いますか？",
+            "relevant_document_ids": ["eval-003"]
+        },
+        {
+            "question": "RAGとは何ですか？",
+            "relevant_document_ids": ["eval-004"]
+        },
+        {
+            "question": "HTTPSはHTTPと何が違いますか？",
+            "relevant_document_ids": ["eval-005"]
+        }
+    ]
+}

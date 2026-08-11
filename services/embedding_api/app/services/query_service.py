@@ -10,6 +10,7 @@ from app.services.multi_query_retrieval_service import (
 from app.services.prompt_builder import prompt_builder
 from app.services.query_normalizer import query_normalizer
 from app.services.reranker_service import reranker_service
+from app.services.search_log_service import search_log_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,37 @@ class QueryService:
             logger.info("========================================")
             logger.info("RAG Query End")
             logger.info("========================================")
+
+            #
+            # 検索ログ
+            #
+            # 正規化後に空になったケースも
+            # 検索失敗分析の対象として記録する。
+            #
+
+            search_log_service.log(
+
+                question=question,
+
+                normalized_question=normalized_question,
+
+                retrieved_items=[],
+
+                reranked_items=[],
+
+                answer="質問内容を確認できませんでした。",
+
+                retrieval_elapsed_ms=0,
+
+                rerank_elapsed_ms=0,
+
+                llm_elapsed_ms=0,
+
+                total_elapsed_ms=total_elapsed,
+
+                cache_hit=False
+
+            )
 
             return {
                 "answer": "質問内容を確認できませんでした。",
@@ -134,6 +166,36 @@ class QueryService:
             )
             logger.info(
                 "========================================"
+            )
+
+            #
+            # 検索ログ
+            #
+            # failure_reason=no_retrieval として記録される。
+            #
+
+            search_log_service.log(
+
+                question=question,
+
+                normalized_question=normalized_question,
+
+                retrieved_items=[],
+
+                reranked_items=[],
+
+                answer="資料から回答できませんでした。",
+
+                retrieval_elapsed_ms=retrieval_elapsed,
+
+                rerank_elapsed_ms=0,
+
+                llm_elapsed_ms=0,
+
+                total_elapsed_ms=total_elapsed,
+
+                cache_hit=retrieval_result.cache_hit
+
             )
 
             return {
@@ -217,6 +279,40 @@ class QueryService:
             )
             logger.info(
                 "========================================"
+            )
+
+            #
+            # 検索ログ
+            #
+            # failure_reason=rerank_filtered として記録される。
+            #
+            # retrieval_result.items（Rerank前）は
+            # min_rerank_scoreでの足切り分析に必要なため、
+            # retrieved_itemsとして渡す。
+            #
+
+            search_log_service.log(
+
+                question=question,
+
+                normalized_question=normalized_question,
+
+                retrieved_items=retrieval_result.items,
+
+                reranked_items=[],
+
+                answer="資料から回答できませんでした。",
+
+                retrieval_elapsed_ms=retrieval_elapsed,
+
+                rerank_elapsed_ms=rerank_elapsed,
+
+                llm_elapsed_ms=0,
+
+                total_elapsed_ms=total_elapsed,
+
+                cache_hit=retrieval_result.cache_hit
+
             )
 
             return {
@@ -331,6 +427,41 @@ class QueryService:
         logger.info("RAG Query End")
         logger.info("========================================")
         logger.info("")
+
+        #
+        # 検索ログ
+        #
+        # failure_reason=ok として記録される。
+        #
+        # retrieval_result.items（Rerank前、Hybrid内訳を含む）と
+        # reranked_items（Rerank後）の両方を渡すことで、
+        # Rerankによる順位変化・Hybridスコア内訳の両方を
+        # 1レコードで分析できるようにする。
+        #
+
+        search_log_service.log(
+
+            question=question,
+
+            normalized_question=normalized_question,
+
+            retrieved_items=retrieval_result.items,
+
+            reranked_items=reranked_items,
+
+            answer=answer,
+
+            retrieval_elapsed_ms=retrieval_elapsed,
+
+            rerank_elapsed_ms=rerank_elapsed,
+
+            llm_elapsed_ms=llm_elapsed,
+
+            total_elapsed_ms=total_elapsed,
+
+            cache_hit=retrieval_result.cache_hit
+
+        )
 
         return {
             "answer": answer,

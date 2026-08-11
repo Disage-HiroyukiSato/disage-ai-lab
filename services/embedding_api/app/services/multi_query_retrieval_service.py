@@ -75,6 +75,16 @@ class MultiQueryRetrievalService:
 
         retrieval_elapsed = 0
 
+        #
+        # Search Cache : Cache Hit伝播
+        #
+        # 展開された複数Queryのうち、1つでも
+        # Cache Hitしたクエリがあれば、この検索全体を
+        # cache_hit=True として検索ログへ伝播させる。
+        #
+
+        any_cache_hit = False
+
         for index, query in enumerate(
             queries,
             start=1
@@ -98,6 +108,10 @@ class MultiQueryRetrievalService:
             )
 
             retrieval_elapsed += result.elapsed_ms
+
+            if result.cache_hit:
+
+                any_cache_hit = True
 
             logger.info(
                 "Query : %s",
@@ -151,7 +165,8 @@ class MultiQueryRetrievalService:
                 query=question,
                 total=0,
                 elapsed_ms=elapsed,
-                items=[]
+                items=[],
+                cache_hit=any_cache_hit
             )
 
         #
@@ -346,7 +361,8 @@ class MultiQueryRetrievalService:
             query=question,
             total=len(merged_items),
             elapsed_ms=elapsed,
-            items=merged_items
+            items=merged_items,
+            cache_hit=any_cache_hit
         )
 
 

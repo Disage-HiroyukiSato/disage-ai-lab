@@ -104,11 +104,13 @@ class ChunkService:
 
                 if current:
 
+                    chunk_id = str(uuid4())
+
                     chunks.append(
 
                         DocumentChunk(
 
-                            chunk_id=str(uuid4()),
+                            chunk_id=chunk_id,
 
                             document_id=document_id,
 
@@ -122,7 +124,17 @@ class ChunkService:
 
                                 "document_id": document_id,
 
-                                "chunk_no": chunk_no
+                                "chunk_no": chunk_no,
+
+                                #
+                                # BM25 Index側との突き合わせに使用する。
+                                #
+                                # RetrievalService._apply_hybrid_score()で
+                                # Vector検索結果とBM25検索結果を
+                                # chunk_id単位で紐付けるため必須。
+                                #
+
+                                "chunk_id": chunk_id
 
                             }
 
@@ -140,11 +152,13 @@ class ChunkService:
 
                     ]
 
+                    chunk_id = str(uuid4())
+
                     chunks.append(
 
                         DocumentChunk(
 
-                            chunk_id=str(uuid4()),
+                            chunk_id=chunk_id,
 
                             document_id=document_id,
 
@@ -158,7 +172,9 @@ class ChunkService:
 
                                 "document_id": document_id,
 
-                                "chunk_no": chunk_no
+                                "chunk_no": chunk_no,
+
+                                "chunk_id": chunk_id
 
                             }
 
@@ -180,11 +196,13 @@ class ChunkService:
 
         if current:
 
+            chunk_id = str(uuid4())
+
             chunks.append(
 
                 DocumentChunk(
 
-                    chunk_id=str(uuid4()),
+                    chunk_id=chunk_id,
 
                     document_id=document_id,
 
@@ -198,7 +216,9 @@ class ChunkService:
 
                         "document_id": document_id,
 
-                        "chunk_no": chunk_no
+                        "chunk_no": chunk_no,
+
+                        "chunk_id": chunk_id
 
                     }
 

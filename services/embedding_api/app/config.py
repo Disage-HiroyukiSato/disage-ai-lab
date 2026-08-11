@@ -134,6 +134,58 @@ class Settings(BaseSettings):
     )
 
     #
+    # Search Cache
+    #
+
+    enable_search_cache: bool = Field(
+
+        default=False,
+
+        alias="ENABLE_SEARCH_CACHE"
+
+    )
+
+    redis_host: str = Field(
+
+        default="redis",
+
+        alias="REDIS_HOST"
+
+    )
+
+    redis_port: int = Field(
+
+        default=6379,
+
+        alias="REDIS_PORT"
+
+    )
+
+    redis_db: int = Field(
+
+        default=1,
+
+        alias="REDIS_DB"
+
+    )
+
+    cache_ttl: int = Field(
+
+        default=300,
+
+        alias="CACHE_TTL"
+
+    )
+
+    cache_key_prefix: str = Field(
+
+        default="disage:retrieval:",
+
+        alias="CACHE_KEY_PREFIX"
+
+    )
+
+    #
     # Parent Retrieval
     #
 

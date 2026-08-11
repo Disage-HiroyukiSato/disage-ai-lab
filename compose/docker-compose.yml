@@ -88,6 +88,48 @@ services:
       - ai-network
 
   ########################################################
+  # Redis (Search Cache)
+  ########################################################
+
+  redis:
+
+    image: redis:7.4-alpine
+
+    container_name: ${REDIS_CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    ports:
+      - "${REDIS_PORT}:6379"
+
+    volumes:
+      - ../data/redis:/data
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "${REDIS_MAXMEMORY}"
+      - --maxmemory-policy
+      - allkeys-lru
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - ai-network
+
+  ########################################################
   # Embedding API
   ########################################################
 
@@ -108,6 +150,7 @@ services:
     volumes:
       - ../config:/app/config:ro
       - ../models:/models:ro
+      - ../data/bm25:/app/data/bm25
 
     ports:
       - "${EMBEDDING_PORT}:8010"
@@ -115,6 +158,8 @@ services:
     depends_on:
       chromadb:
         condition: service_started
+      redis:
+        condition: service_healthy
 
     healthcheck:
 

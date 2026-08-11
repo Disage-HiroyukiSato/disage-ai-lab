@@ -6,6 +6,7 @@ from app.config import settings
 from app.core.exceptions import EmbeddingException
 from app.services.chunk_service import chunk_service
 from app.services.chroma_service import chroma_service
+from app.services.bm25_service import bm25_service
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,10 @@ class EmbeddingService:
 
         for chunk in chunks:
 
+            #
+            # Vector Index登録
+            #
+
             embedding = model.encode(
 
                 chunk.text,
@@ -86,6 +91,40 @@ class EmbeddingService:
                 embedding
 
             )
+
+            #
+            # BM25 Index登録
+            #
+            # Vector Indexと同じchunkを、同じタイミングで
+            # BM25側にも登録する。
+            #
+            # 片方だけ登録される不整合を避けるため、
+            # register()内でまとめて実行する。
+            #
+
+            if settings.enable_hybrid_search:
+
+                try:
+
+                    bm25_service.add(
+
+                        chunk_id=chunk.chunk_id,
+
+                        text=chunk.text,
+
+                        metadata=chunk.metadata
+
+                    )
+
+                except Exception:
+
+                    logger.exception(
+
+                        "BM25 index registration failed : %s",
+
+                        chunk.chunk_id
+
+                    )
 
         return len(chunks)
 

@@ -11,5 +11,6 @@ COPY services/embedding_api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/embedding_api/app ./app
+COPY services/embedding_api/tests ./tests
 
 CMD ["pytest", "-v", "/app/tests"]

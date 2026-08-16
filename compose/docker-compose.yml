@@ -3,12 +3,12 @@ name: ${COMPOSE_PROJECT_NAME}
 services:
 
   ########################################################
-  # LLM (llama.cpp)
+  # メインLLM (llama.cpp)
   ########################################################
 
   llama-cpp:
 
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
 
     container_name: ${LLM_CONTAINER_NAME}
 
@@ -63,6 +63,77 @@ services:
 
     stop_grace_period: 60s
 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    networks:
+      - ai-network
+
+  ########################################################
+  # LLM : Query Rewriting用（軽量モデル）
+  ########################################################
+  #
+  # Phase17 : マルチターン対話のQuery Rewriting専用。
+  #
+  # メイン回答生成用のllama-cppとは別コンテナで、
+  # 軽量モデル（例: Qwen2.5-1.5B-Instruct）を常時起動する。
+  #
+  # GPU環境の場合は LLM_REWRITER_GPU_LAYER を .env で
+  # 999等に変更し、下記の deploy セクションのコメントを
+  # 解除してください。CPU環境ではそのままで動作します。
+  #
+ 
+  llama-rewriter:
+ 
+    image: ${LLM_REWRITER_IMAGE}
+ 
+    container_name: ${LLM_REWRITER_CONTAINER_NAME}
+ 
+    restart: unless-stopped
+ 
+    ports:
+      - "${LLAMA_REWRITER_PORT}:8080"
+ 
+    volumes:
+      - ../models:/models
+ 
+    environment:
+      - LLAMA_ARG_MODEL=/models/llm/${LLM_REWRITER_MODEL}
+      - LLAMA_ARG_CTX_SIZE=${LLM_REWRITER_CONTEXT_SIZE}
+      - LLAMA_ARG_N_GPU_LAYERS=${LLM_REWRITER_GPU_LAYER}
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8080
+ 
+    # GPU環境の場合はコメントを解除してください
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+ 
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://localhost:8080/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+ 
+    stop_grace_period: 60s
+ 
     networks:
       - ai-network
 
@@ -130,6 +201,42 @@ services:
       - ai-network
 
   ########################################################
+  # PostgreSQL (Phase17 : 進捗管理・会話履歴)
+  ########################################################
+
+  postgres:
+
+    image: postgres:16-alpine
+
+    container_name: ${POSTGRES_CONTAINER_NAME}
+
+    restart: unless-stopped
+
+    env_file:
+      - ../config/database.env
+
+    ports:
+      - "${POSTGRES_PORT}:5432"
+
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../db/init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - ai-network
+
+  ########################################################
   # Embedding API
   ########################################################
 
@@ -146,11 +253,13 @@ services:
     env_file:
       - ../config/app.env
       - ../config/rag.env
+      - ../config/database.env
 
     volumes:
       - ../config:/app/config:ro
       - ../models:/models:ro
       - ../data/bm25:/app/data/bm25
+      - ../data/documents:/app/data/documents:ro
 
     ports:
       - "${EMBEDDING_PORT}:8010"
@@ -159,6 +268,8 @@ services:
       chromadb:
         condition: service_started
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
     healthcheck:
@@ -237,6 +348,9 @@ volumes:
 
   chromadb-data:
     name: ${CHROMA_VOLUME}
+
+  postgres-data:
+    name: ${POSTGRES_VOLUME}
 
 
 ########################################################

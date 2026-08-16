@@ -8,24 +8,16 @@ from app.models.retrieval_result import RetrievalResult
 
 from app.services.embedding_service import embedding_service
 from app.services.chroma_service import chroma_service
-from app.services.bm25_service import bm25_service
+from app.services.bm25_service import get_bm25_service
 from app.services.cache_service import cache_service
+from app.services.collection_router_service import (
+    collection_router_service
+)
 
 logger = logging.getLogger(__name__)
 
 
 class RetrievalService:
-
-    #
-    # ------------------------------------------------------
-    # Hybrid Search : Score正規化
-    # ------------------------------------------------------
-    #
-    # Min-Maxで [0, 1] に正規化する。
-    #
-    # 候補が1件のみ、または全件同値の場合は
-    # 全件 1.0 として扱う（差がつけられないため）。
-    #
 
     def _normalize(
         self,
@@ -54,26 +46,11 @@ class RetrievalService:
             for value in values
         ]
 
-    #
-    # ------------------------------------------------------
-    # Hybrid Search : Vector + BM25 合成
-    # ------------------------------------------------------
-    #
-    # items          : Vector検索結果（distance昇順ソート前）
-    # question       : BM25検索に使用するquery文字列
-    #
-    # Vector distance（小さいほど良い）を類似度
-    # （大きいほど良い）に変換したうえで正規化し、
-    # BM25 scoreも正規化したうえで重み付き合成する。
-    #
-    # 正規化前の生値（bm25_raw_score / vector_similarity）も
-    # 検索ログ分析（Phase14-6）用にitemへ保存する。
-    #
-
     def _apply_hybrid_score(
         self,
         question: str,
-        items: list[RetrievalItem]
+        items: list[RetrievalItem],
+        collection_name: str
     ) -> None:
 
         if not items:
@@ -83,10 +60,6 @@ class RetrievalService:
         logger.info("----------------------------------------")
         logger.info("Hybrid Search Start")
         logger.info("----------------------------------------")
-
-        #
-        # Vector類似度 (1 - distance) を正規化
-        #
 
         vector_similarities = [
 
@@ -102,12 +75,11 @@ class RetrievalService:
 
         )
 
-        #
-        # BM25検索
-        #
-        # candidate_size分だけ取得し、chunk_idで引けるように
-        # マップ化する。
-        #
+        bm25_service = get_bm25_service(
+
+            collection_name
+
+        )
 
         bm25_results = bm25_service.search(
 
@@ -135,12 +107,6 @@ class RetrievalService:
 
             bm25_score_map[chunk_id] = result["score"]
 
-        #
-        # Vector側items の chunk_id と BM25 score を突き合わせる。
-        #
-        # chunk_idが取得できないitemは0.0として扱う。
-        #
-
         raw_bm25_scores = []
 
         for item in items:
@@ -167,10 +133,6 @@ class RetrievalService:
             raw_bm25_scores
 
         )
-
-        #
-        # 重み付き合成 + 内訳スコアの保存
-        #
 
         for (
 
@@ -206,10 +168,6 @@ class RetrievalService:
 
             )
 
-            #
-            # 検索ログ分析用の内訳（正規化前の生値）
-            #
-
             item.vector_similarity = vector_similarity
 
             item.bm25_raw_score = raw_bm25_score
@@ -236,9 +194,94 @@ class RetrievalService:
 
     #
     # ------------------------------------------------------
-    # Search Cache : キャッシュからRetrievalResultを復元
+    # Phase17 : Chapterブースト
     # ------------------------------------------------------
     #
+    # 受講生が現在学習中のchapterと一致するチャンクの
+    # スコアに一定値を加算し、優先的に上位へ来るようにする。
+    #
+    # 完全一致フィルタではなく、他chapterのチャンクも
+    # 検索対象に残すブースト方式とする（合意済みの方針）。
+    #
+    # Hybrid有効時 : hybrid_score に加算
+    # Hybrid無効時 : distanceを減算（小さいほど上位のため）
+    #
+    # current_chapterが空文字列（進捗未登録）の場合は
+    # 何もしない。
+    #
+
+    def _apply_chapter_boost(
+
+        self,
+
+        items: list[RetrievalItem],
+
+        current_chapter: str
+
+    ) -> None:
+
+        if not current_chapter or not items:
+
+            return
+
+        boost_weight = settings.chapter_boost_weight
+
+        if boost_weight <= 0:
+
+            return
+
+        boosted_count = 0
+
+        for item in items:
+
+            item_chapter = (
+
+                item.metadata or {}
+
+            ).get(
+
+                "chapter",
+
+                ""
+
+            )
+
+            if item_chapter != current_chapter:
+
+                continue
+
+            boosted_count += 1
+
+            if settings.enable_hybrid_search:
+
+                item.hybrid_score += boost_weight
+
+            else:
+
+                item.distance = max(
+
+                    0.0,
+
+                    item.distance - boost_weight
+
+                )
+
+        if boosted_count:
+
+            logger.info(
+
+                "Chapter Boost applied : chapter=%s "
+                "boosted=%d/%d weight=%.2f",
+
+                current_chapter,
+
+                boosted_count,
+
+                len(items),
+
+                boost_weight
+
+            )
 
     def _restore_from_cache(
 
@@ -276,12 +319,6 @@ class RetrievalService:
 
         )
 
-    #
-    # ------------------------------------------------------
-    # Search Cache : RetrievalResultをキャッシュ用dictへ変換
-    # ------------------------------------------------------
-    #
-
     def _serialize_for_cache(
 
         self,
@@ -308,29 +345,37 @@ class RetrievalService:
 
         }
 
-    def search(
+    def _search_single_collection(
+
         self,
+
         question: str,
-        limit: int = 5,
+
+        limit: int,
+
+        collection_name: str,
+
         document_id: str | None = None,
+
         category: str | None = None,
+
         title: str | None = None,
-        keywords: str | None = None
+
+        keywords: str | None = None,
+
+        current_chapter: str = ""
+
     ) -> RetrievalResult:
 
         start = time.perf_counter()
 
-        #
-        # Search Cache : キャッシュ確認
-        #
-        # ENABLE_SEARCH_CACHE=true の場合のみ、
-        # Cache Keyを生成しRedisを参照する。
-        #
-        # Hitした場合はVector検索・BM25検索・Embedding生成を
-        # 一切行わず、キャッシュ済み結果をそのまま返す。
-        #
-
         cache_key = None
+
+        #
+        # Phase17 : Chapterブーストが有効な場合、
+        # 同じ質問でもcurrent_chapterによって並び順が
+        # 変わるため、キャッシュキーにも含める。
+        #
 
         if settings.enable_search_cache:
 
@@ -347,6 +392,14 @@ class RetrievalService:
                 title=title,
 
                 keywords=keywords
+
+            )
+
+            cache_key = (
+
+                f"{collection_name}:"
+                f"{current_chapter}:"
+                f"{cache_key}"
 
             )
 
@@ -368,7 +421,8 @@ class RetrievalService:
                     "----------------------------------------"
                 )
                 logger.info(
-                    "Retrieval Cache Hit : %s",
+                    "Retrieval Cache Hit [%s] : %s",
+                    collection_name,
                     cache_key
                 )
                 logger.info(
@@ -387,24 +441,22 @@ class RetrievalService:
 
             logger.info(
 
-                "Retrieval Cache Miss : %s",
+                "Retrieval Cache Miss [%s] : %s",
+
+                collection_name,
 
                 cache_key
 
             )
 
         logger.info("----------------------------------------")
-        logger.info("Vector Retrieval Start")
+        logger.info("Vector Retrieval Start [%s]", collection_name)
         logger.info("----------------------------------------")
 
         logger.info(
             "Question : %s",
             question
         )
-
-        #
-        # Embedding生成
-        #
 
         embedding_start = time.perf_counter()
 
@@ -422,10 +474,6 @@ class RetrievalService:
             "Embedding Time : %d ms",
             embedding_elapsed
         )
-
-        #
-        # Metadata Filter生成
-        #
 
         where = {}
 
@@ -450,16 +498,13 @@ class RetrievalService:
             where if where else None
         )
 
-        #
-        # ChromaDB検索
-        #
-
         chroma_start = time.perf_counter()
 
         result = chroma_service.query(
             embedding=embedding,
             candidate_size=settings.retrieval_candidate_size,
-            where=where if where else None
+            where=where if where else None,
+            collection_name=collection_name
         )
 
         chroma_elapsed = int(
@@ -472,10 +517,6 @@ class RetrievalService:
             "Chroma Search Time : %d ms",
             chroma_elapsed
         )
-
-        #
-        # 検索結果確認
-        #
 
         documents = []
 
@@ -504,7 +545,8 @@ class RetrievalService:
             )
 
             logger.info(
-                "No vector search results."
+                "No vector search results [%s].",
+                collection_name
             )
 
             logger.info(
@@ -513,7 +555,7 @@ class RetrievalService:
             )
 
             logger.info("----------------------------------------")
-            logger.info("Vector Retrieval End")
+            logger.info("Vector Retrieval End [%s]", collection_name)
             logger.info("----------------------------------------")
 
             empty_result = RetrievalResult(
@@ -522,13 +564,6 @@ class RetrievalService:
                 elapsed_ms=elapsed,
                 items=[]
             )
-
-            #
-            # 0件結果もキャッシュする
-            #
-            # 存在しない資料に対する質問が繰り返された場合、
-            # 毎回Embedding生成〜Chroma検索を行うのは無駄なため。
-            #
 
             if (
 
@@ -551,10 +586,6 @@ class RetrievalService:
                 )
 
             return empty_result
-
-        #
-        # Distance Filter
-        #
 
         items: list[RetrievalItem] = []
 
@@ -587,23 +618,31 @@ class RetrievalService:
             len(items)
         )
 
-        #
-        # Hybrid Search
-        #
-        # ENABLE_HYBRID_SEARCH=true の場合のみ、
-        # BM25 scoreを合成してhybrid_scoreを設定する。
-        #
-
         if settings.enable_hybrid_search and items:
 
             self._apply_hybrid_score(
                 question=question,
-                items=items
+                items=items,
+                collection_name=collection_name
             )
 
-            #
-            # Hybrid Score降順
-            #
+        #
+        # Phase17 : Chapterブースト
+        #
+        # Hybrid合成後、ソート前に適用する。
+        #
+
+        if current_chapter:
+
+            self._apply_chapter_boost(
+
+                items=items,
+
+                current_chapter=current_chapter
+
+            )
+
+        if settings.enable_hybrid_search:
 
             items.sort(
 
@@ -615,46 +654,16 @@ class RetrievalService:
 
         else:
 
-            #
-            # Distance昇順（従来通り）
-            #
-            # Rerankerはここでは実行しない。
-            #
-            # 複数Query検索では、
-            #
-            # Query Expansion
-            #       ↓
-            # Vector Retrieval
-            #       ↓
-            # Merge
-            #       ↓
-            # Reranker
-            #
-            # の順序にするため、Rerankerは
-            # MultiQueryRetrievalServiceより後段で実行する。
-            #
-
             items.sort(
                 key=lambda item: item.distance
             )
-
-        #
-        # limit適用
-        #
-        # retrieval_candidate_sizeで取得した候補から、
-        # 呼び出し側へ返す件数を制限する。
-        #
 
         if limit > 0:
 
             items = items[:limit]
 
-        #
-        # Retrieval結果ログ
-        #
-
         logger.info("----------------------------------------")
-        logger.info("Vector Retrieval Result")
+        logger.info("Vector Retrieval Result [%s]", collection_name)
         logger.info("----------------------------------------")
 
         for index, item in enumerate(
@@ -684,10 +693,6 @@ class RetrievalService:
                 preview[:120]
             )
 
-        #
-        # 処理時間
-        #
-
         elapsed = int(
             (
                 time.perf_counter() - start
@@ -705,7 +710,7 @@ class RetrievalService:
         )
 
         logger.info("----------------------------------------")
-        logger.info("Vector Retrieval End")
+        logger.info("Vector Retrieval End [%s]", collection_name)
         logger.info("----------------------------------------")
 
         final_result = RetrievalResult(
@@ -714,10 +719,6 @@ class RetrievalService:
             elapsed_ms=elapsed,
             items=items
         )
-
-        #
-        # Search Cache : 保存
-        #
 
         if (
 
@@ -741,7 +742,9 @@ class RetrievalService:
 
             logger.info(
 
-                "Retrieval Cache Set : %s (TTL=%ds)",
+                "Retrieval Cache Set [%s] : %s (TTL=%ds)",
+
+                collection_name,
 
                 cache_key,
 
@@ -750,6 +753,197 @@ class RetrievalService:
             )
 
         return final_result
+
+    def search(
+        self,
+        question: str,
+        limit: int = 5,
+        document_id: str | None = None,
+        category: str | None = None,
+        title: str | None = None,
+        keywords: str | None = None,
+        collection_name: str | None = None,
+        current_chapter: str = ""
+    ) -> RetrievalResult:
+
+        start = time.perf_counter()
+
+        if collection_name:
+
+            resolved = collection_name
+
+        else:
+
+            resolved = collection_router_service.route(
+
+                question
+
+            )
+
+        if resolved != collection_router_service.BOTH:
+
+            return self._search_single_collection(
+
+                question=question,
+
+                limit=limit,
+
+                collection_name=resolved,
+
+                document_id=document_id,
+
+                category=category,
+
+                title=title,
+
+                keywords=keywords,
+
+                current_chapter=current_chapter
+
+            )
+
+        logger.info(
+
+            "Collection Router -> both : "
+            "searching java_training and instructor_ops"
+
+        )
+
+        result_java = self._search_single_collection(
+
+            question=question,
+
+            limit=limit,
+
+            collection_name=settings.collection_java_training,
+
+            document_id=document_id,
+
+            category=category,
+
+            title=title,
+
+            keywords=keywords,
+
+            current_chapter=current_chapter
+
+        )
+
+        result_ops = self._search_single_collection(
+
+            question=question,
+
+            limit=limit,
+
+            collection_name=settings.collection_instructor_ops,
+
+            document_id=document_id,
+
+            category=category,
+
+            title=title,
+
+            keywords=keywords,
+
+            current_chapter=current_chapter
+
+        )
+
+        merged_items = (
+
+            result_java.items
+
+            + result_ops.items
+
+        )
+
+        any_cache_hit = (
+
+            result_java.cache_hit
+
+            or result_ops.cache_hit
+
+        )
+
+        if not merged_items:
+
+            elapsed = int(
+                (
+                    time.perf_counter() - start
+                ) * 1000
+            )
+
+            return RetrievalResult(
+
+                query=question,
+
+                total=0,
+
+                elapsed_ms=elapsed,
+
+                items=[],
+
+                cache_hit=any_cache_hit
+
+            )
+
+        if settings.enable_hybrid_search:
+
+            merged_items.sort(
+
+                key=lambda item: item.hybrid_score,
+
+                reverse=True
+
+            )
+
+        else:
+
+            merged_items.sort(
+
+                key=lambda item: item.distance
+
+            )
+
+        if limit > 0:
+
+            merged_items = merged_items[:limit]
+
+        elapsed = int(
+            (
+                time.perf_counter() - start
+            ) * 1000
+        )
+
+        logger.info(
+
+            "Both collections merged : "
+            "java_training=%d instructor_ops=%d -> %d "
+            "(elapsed=%dms)",
+
+            result_java.total,
+
+            result_ops.total,
+
+            len(merged_items),
+
+            elapsed
+
+        )
+
+        return RetrievalResult(
+
+            query=question,
+
+            total=len(merged_items),
+
+            elapsed_ms=elapsed,
+
+            items=merged_items,
+
+            cache_hit=any_cache_hit
+
+        )
 
 
 retrieval_service = RetrievalService()

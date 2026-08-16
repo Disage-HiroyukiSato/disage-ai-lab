@@ -34,6 +34,26 @@ class Settings(BaseSettings):
     request_timeout: int
 
     #
+    # Phase16 : 複数コレクション対応
+    #
+
+    collection_java_training: str = Field(
+
+        default="java_training",
+
+        alias="COLLECTION_JAVA_TRAINING"
+
+    )
+
+    collection_instructor_ops: str = Field(
+
+        default="instructor_ops",
+
+        alias="COLLECTION_INSTRUCTOR_OPS"
+
+    )
+
+    #
     # LLM
     #
 
@@ -182,6 +202,133 @@ class Settings(BaseSettings):
         default="disage:retrieval:",
 
         alias="CACHE_KEY_PREFIX"
+
+    )
+
+    #
+    # Phase16 : Collection Router
+    #
+
+    collection_router_dictionary: str = Field(
+
+        default="/app/config/collection_router_dictionary.json",
+
+        alias="COLLECTION_ROUTER_DICTIONARY"
+
+    )
+
+    #
+    # Phase17 : PostgreSQL（進捗管理・会話履歴）
+    #
+
+    postgres_host: str = Field(
+
+        default="postgres",
+
+        alias="POSTGRES_HOST"
+
+    )
+
+    postgres_port: int = Field(
+
+        default=5432,
+
+        alias="POSTGRES_PORT_INTERNAL"
+
+    )
+
+    postgres_db: str = Field(
+
+        default="disage_ai",
+
+        alias="POSTGRES_DB"
+
+    )
+
+    postgres_user: str = Field(
+
+        default="disage",
+
+        alias="POSTGRES_USER"
+
+    )
+
+    postgres_password: str = Field(
+
+        default="",
+
+        alias="POSTGRES_PASSWORD"
+
+    )
+
+    #
+    # Phase17 : 研修用AIアシスタント
+    #
+
+    enable_training_assistant: bool = Field(
+
+        default=False,
+
+        alias="ENABLE_TRAINING_ASSISTANT"
+
+    )
+
+    #
+    # マルチターン対話で遡る往復数（user+assistantで1往復）
+    #
+
+    conversation_history_turns: int = Field(
+
+        default=3,
+
+        alias="CONVERSATION_HISTORY_TURNS"
+
+    )
+
+    #
+    # 現在学習中chapterのブースト強度
+    #
+    # hybrid_score（またはdistanceベースの類似度）に
+    # 加算する形で作用する。0.0で無効化。
+    #
+
+    chapter_boost_weight: float = Field(
+
+        default=0.15,
+
+        alias="CHAPTER_BOOST_WEIGHT"
+
+    )
+
+    #
+    # 教材外判定用キーワード辞書
+    #
+
+    off_topic_dictionary: str = Field(
+
+        default="/app/config/off_topic_dictionary.json",
+
+        alias="OFF_TOPIC_DICTIONARY"
+
+    )
+
+    #
+    # Phase17 : Query Rewriting専用LLM（軽量モデル）
+    #
+
+    llm_rewriter_url: str = Field(
+
+        default="http://llama-rewriter:8080",
+
+        alias="LLM_REWRITER_URL"
+
+    )
+
+    llm_rewriter_timeout: int = Field(
+
+        default=30,
+
+        alias="LLM_REWRITER_TIMEOUT"
 
     )
 

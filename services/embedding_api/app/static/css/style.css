@@ -141,3 +141,75 @@ pre{
     margin-top:0;
 
 }
+
+/*
+ * Phase17 : 研修用AIアシスタント
+ *
+ * 会話履歴表示・教材外バッジ用のスタイル
+ */
+
+#history{
+
+    max-height: 320px;
+
+    overflow-y: auto;
+
+    border: 1px solid #ddd;
+
+    border-radius: 6px;
+
+    padding: 12px 16px;
+
+    margin-bottom: 20px;
+
+    background: #fafafa;
+
+}
+
+.history-turn{
+
+    padding: 10px 0;
+
+    border-bottom: 1px solid #e0e0e0;
+
+}
+
+.history-turn:last-child{
+
+    border-bottom: none;
+
+}
+
+.history-turn p{
+
+    margin: 4px 0;
+
+    white-space: pre-wrap;
+
+}
+
+.off-topic-badge{
+
+    display: inline-block;
+
+    background: #ffe0b2;
+
+    color: #e65100;
+
+    font-size: 12px;
+
+    padding: 2px 8px;
+
+    border-radius: 10px;
+
+    margin-left: 6px;
+
+}
+
+input[readonly]{
+
+    background: #eeeeee;
+
+    color: #666;
+
+}

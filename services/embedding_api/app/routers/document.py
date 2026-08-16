@@ -34,6 +34,30 @@ class DocumentRequest(BaseModel):
 
     keywords: str = ""
 
+    #
+    # Phase15 : Java教材PDF RAG化
+    #
+
+    chapter: str = ""
+
+    section: str = ""
+
+    language: str = ""
+
+    #
+    # Phase16 : 複数コレクション対応
+    #
+    # 登録先コレクションを選択する。
+    #
+    # 未指定時はsettings.chroma_collection
+    # （既存の単一コレクション運用、実質java_training）
+    # へ登録される後方互換動作となる。
+    #
+    # 例 : "java_training" | "instructor_ops"
+    #
+
+    collection: str = ""
+
     text: str
 
 
@@ -47,7 +71,9 @@ async def register(
 
     logger.info(
 
-        "Register document"
+        "Register document (collection=%s)",
+
+        request.collection or "(default)"
 
     )
 
@@ -65,9 +91,23 @@ async def register(
 
                 "category": request.category,
 
-                "keywords": request.keywords
+                "keywords": request.keywords,
 
-            }
+                "chapter": request.chapter,
+
+                "section": request.section,
+
+                "language": request.language
+
+            },
+
+            collection_name=(
+
+                request.collection
+
+                or None
+
+            )
 
         )
 
@@ -108,6 +148,14 @@ async def register(
             "success": True,
 
             "document_id": request.document_id,
+
+            "collection": (
+
+                request.collection
+
+                or settings.chroma_collection
+
+            ),
 
             "chunks": chunk_count
 

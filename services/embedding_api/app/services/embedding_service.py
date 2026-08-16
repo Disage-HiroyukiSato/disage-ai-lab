@@ -6,7 +6,7 @@ from app.config import settings
 from app.core.exceptions import EmbeddingException
 from app.services.chunk_service import chunk_service
 from app.services.chroma_service import chroma_service
-from app.services.bm25_service import bm25_service
+from app.services.bm25_service import get_bm25_service
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +54,111 @@ class EmbeddingService:
 
         text: str,
 
-        metadata: dict | None = None
+        metadata: dict | None = None,
+
+        collection_name: str | None = None
 
     ):
 
+        #
+        # Phase16 : 複数コレクション対応
+        #
+        # collection_name未指定時は既存の
+        # settings.chroma_collection（java_training想定）
+        # へ登録する後方互換動作とする。
+        #
+
+        target_collection = (
+
+            collection_name
+
+            or settings.chroma_collection
+
+        )
+
+        bm25_service = get_bm25_service(
+
+            target_collection
+
+        )
+
         model = self.get_model()
+
+        #
+        # 既存チャンクの削除（更新扱い）
+        #
+        # 同一document_idで再登録された場合、
+        # 古いチャンクをVector Index（ChromaDB）と
+        # BM25 Indexの両方から削除してから
+        # 新規チャンクを登録する。
+        #
+        # これを行わないと、古い内容と新しい内容が
+        # 検索結果に重複して出現してしまう。
+        #
+
+        try:
+
+            chroma_service.delete_by_document_id(
+
+                document_id,
+
+                collection_name=target_collection
+
+            )
+
+        except Exception:
+
+            logger.exception(
+
+                "Chroma delete_by_document_id failed : "
+                "%s (collection=%s)",
+
+                document_id,
+
+                target_collection
+
+            )
+
+        try:
+
+            removed_count = bm25_service.remove_by_document_id(
+
+                document_id
+
+            )
+
+            if removed_count:
+
+                logger.info(
+
+                    "Existing BM25 chunks removed "
+                    "(re-register) : %s (%d chunks, "
+                    "collection=%s)",
+
+                    document_id,
+
+                    removed_count,
+
+                    target_collection
+
+                )
+
+        except Exception:
+
+            logger.exception(
+
+                "BM25 remove_by_document_id failed : "
+                "%s (collection=%s)",
+
+                document_id,
+
+                target_collection
+
+            )
+
+        #
+        # 新規チャンク生成・登録
+        #
 
         chunks = chunk_service.split(
 
@@ -88,7 +188,9 @@ class EmbeddingService:
 
                 chunk,
 
-                embedding
+                embedding,
+
+                collection_name=target_collection
 
             )
 
@@ -120,9 +222,12 @@ class EmbeddingService:
 
                     logger.exception(
 
-                        "BM25 index registration failed : %s",
+                        "BM25 index registration failed : "
+                        "%s (collection=%s)",
 
-                        chunk.chunk_id
+                        chunk.chunk_id,
+
+                        target_collection
 
                     )
 

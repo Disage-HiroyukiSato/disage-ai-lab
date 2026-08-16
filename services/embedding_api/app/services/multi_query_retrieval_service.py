@@ -23,7 +23,9 @@ class MultiQueryRetrievalService:
         document_id: str | None = None,
         category: str | None = None,
         title: str | None = None,
-        keywords: str | None = None
+        keywords: str | None = None,
+        collection_name: str | None = None,
+        current_chapter: str = ""
     ) -> RetrievalResult:
 
         start = time.perf_counter()
@@ -36,10 +38,6 @@ class MultiQueryRetrievalService:
             "Question : %s",
             question
         )
-
-        #
-        # Query Expansion
-        #
 
         queries = query_expansion_service.expand(
             question
@@ -67,21 +65,9 @@ class MultiQueryRetrievalService:
                 query
             )
 
-        #
-        # 複数Query検索
-        #
-
         all_items: list[RetrievalItem] = []
 
         retrieval_elapsed = 0
-
-        #
-        # Search Cache : Cache Hit伝播
-        #
-        # 展開された複数Queryのうち、1つでも
-        # Cache Hitしたクエリがあれば、この検索全体を
-        # cache_hit=True として検索ログへ伝播させる。
-        #
 
         any_cache_hit = False
 
@@ -98,13 +84,24 @@ class MultiQueryRetrievalService:
             )
             logger.info("----------------------------------------")
 
+            #
+            # Phase16 : collection_name
+            # Phase17 : current_chapter
+            #
+            # どちらもQuery Expansionで展開された全クエリに
+            # 対して一貫して同じ値を使用する
+            # （呼び出し元のquery_serviceで一度だけ解決済み）。
+            #
+
             result = retrieval_service.search(
                 question=query,
                 limit=limit,
                 document_id=document_id,
                 category=category,
                 title=title,
-                keywords=keywords
+                keywords=keywords,
+                collection_name=collection_name,
+                current_chapter=current_chapter
             )
 
             retrieval_elapsed += result.elapsed_ms
@@ -130,10 +127,6 @@ class MultiQueryRetrievalService:
             all_items.extend(
                 result.items
             )
-
-        #
-        # 検索結果なし
-        #
 
         if not all_items:
 
@@ -169,15 +162,6 @@ class MultiQueryRetrievalService:
                 cache_hit=any_cache_hit
             )
 
-        #
-        # 重複除去
-        #
-        # document_id + chunk_noを基本キーとする。
-        #
-        # metadataが不足している場合は、
-        # document本文をフォールバックキーとして使用する。
-        #
-
         unique_items: dict[
             tuple,
             RetrievalItem
@@ -212,21 +196,11 @@ class MultiQueryRetrievalService:
                     item.document
                 )
 
-            #
-            # 新規登録
-            #
-
             if key not in unique_items:
 
                 unique_items[key] = item
 
                 continue
-
-            #
-            # 同一Chunkが複数Queryから取得された場合
-            #
-            # Vector distanceが小さい方を採用する。
-            #
 
             current_item = unique_items[key]
 
@@ -248,35 +222,13 @@ class MultiQueryRetrievalService:
             len(merged_items)
         )
 
-        #
-        # Distance順
-        #
-        # 現段階ではRetrievalServiceがRerankerを
-        # 実行しているため、各Queryのscoreは存在する。
-        #
-        # Phase14-2でRetrievalServiceからRerankerを
-        # 分離した後は、この部分をRerankerServiceへ
-        # 渡す前の候補集合として使用する。
-        #
-
         merged_items.sort(
             key=lambda item: item.distance
         )
 
-        #
-        # limit適用
-        #
-        # 現段階では既存RetrievalServiceとの互換性を
-        # 維持するため、最終limitを適用する。
-        #
-
         if limit > 0:
 
             merged_items = merged_items[:limit]
-
-        #
-        # 結果ログ
-        #
 
         logger.info("----------------------------------------")
         logger.info("Merged Retrieval Result")
@@ -308,10 +260,6 @@ class MultiQueryRetrievalService:
                 "Document : %s",
                 preview[:120]
             )
-
-        #
-        # 処理時間
-        #
 
         elapsed = int(
             (

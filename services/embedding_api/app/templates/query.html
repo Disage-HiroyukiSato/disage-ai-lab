@@ -18,6 +18,44 @@
 
 <h1>質問</h1>
 
+<label>受講生ID（任意）</label>
+
+<input
+
+    id="studentId"
+
+    type="text"
+
+    placeholder="student-001"
+
+/>
+
+<label>セッションID</label>
+
+<input
+
+    id="sessionId"
+
+    type="text"
+
+    readonly
+
+/>
+
+<button
+
+    onclick="resetSession()"
+
+>
+
+新しい会話を始める
+
+</button>
+
+<h2>会話履歴</h2>
+
+<div id="history"></div>
+
 <label>質問内容</label>
 
 <input
@@ -61,6 +99,14 @@
 <td>取得件数</td>
 
 <td id="retrieved"></td>
+
+</tr>
+
+<tr>
+
+<td>教材外判定</td>
+
+<td id="offTopic"></td>
 
 </tr>
 

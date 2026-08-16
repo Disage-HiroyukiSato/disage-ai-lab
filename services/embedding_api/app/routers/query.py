@@ -25,6 +25,23 @@ class QueryRequest(BaseModel):
 
     limit: int = settings.default_limit
 
+    #
+    # Phase17 : 研修用AIアシスタント
+    #
+    # student_id : 受講生ID。指定するとstudent_progressを
+    #              参照し、現在の学習chapterで検索結果を
+    #              ブーストする。未指定時はブースト無効。
+    #
+    # session_id : 会話セッションID。マルチターン対話の
+    #              履歴をひも付けるためのキー。未指定時は
+    #              履歴の保存・参照ともに行わない
+    #              （単発Q&Aとして動作、既存動作と同じ）。
+    #
+
+    student_id: str | None = None
+
+    session_id: str | None = None
+
 
 @router.post(
 
@@ -44,7 +61,11 @@ async def query(
 
         request.question,
 
-        request.limit
+        request.limit,
+
+        student_id=request.student_id,
+
+        session_id=request.session_id
 
     )
 

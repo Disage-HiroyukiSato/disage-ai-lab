@@ -8,6 +8,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from app.config import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +30,44 @@ class BM25Service:
     NGRAM_SIZE = 2
 
     #
-    # 永続化先
+    # ------------------------------------------------------
+    # Phase16 : コレクション別インデックスファイル
+    # ------------------------------------------------------
+    #
+    # コレクションごとに完全に独立したインスタンス・
+    # インデックスファイルを持つ。
+    #
+    # 例:
+    #   /app/data/bm25/index_java_training.json
+    #   /app/data/bm25/index_instructor_ops.json
+    #
+    # コンストラクタでcollection_nameを受け取り、
+    # ファイル名に反映する。
     #
 
-    INDEX_PATH = Path(
-        "/app/data/bm25/index.json"
+    INDEX_DIR = Path(
+
+        "/app/data/bm25"
+
     )
 
-    def __init__(self):
+    def __init__(
+
+        self,
+
+        collection_name: str = "default"
+
+    ):
+
+        self.collection_name = collection_name
+
+        self.index_path = (
+
+            self.INDEX_DIR
+
+            / f"index_{collection_name}.json"
+
+        )
 
         self.lock = threading.RLock()
 
@@ -65,6 +97,21 @@ class BM25Service:
         #
 
         self.average_document_length = 0.0
+
+        #
+        # document_id -> chunk_id一覧（逆引きインデックス）
+        #
+        # 同一document_idの再登録（更新）時に、
+        # 該当document_idの全chunk_idを高速に列挙して
+        # 削除できるようにするための索引。
+        #
+        # _load()時にdocumentsから再構築する。
+        #
+
+        self.document_id_index: dict[
+            str,
+            set[str]
+        ] = {}
 
         self._load()
 
@@ -106,14 +153,6 @@ class BM25Service:
         #
         # 2文字gramを生成する。
         #
-        # 例:
-        #
-        # 「検索機能」
-        #
-        # -> 「検索」
-        # -> 「索機」
-        # -> 「機能」
-        #
 
         cjk_chars = re.findall(
             r"[\u3040-\u30ff"
@@ -143,17 +182,6 @@ class BM25Service:
                         ]
                     )
                 )
-
-        #
-        # 日本語文字列の位置関係をある程度維持するため、
-        # 連続したCJK文字列についてもgramを生成する。
-        #
-        # 上記では全文からCJK文字だけを抜き出しているため、
-        # 異なる単語をまたいでgramが生成される可能性がある。
-        #
-        # そのため、実際の検索用には連続CJK文字列単位でも
-        # gramを追加する。
-        #
 
         cjk_sequences = re.findall(
             r"[\u3040-\u30ff"
@@ -221,6 +249,106 @@ class BM25Service:
         )
 
     #
+    # document_id逆引きインデックス : 登録
+    #
+
+    def _index_add(
+
+        self,
+
+        chunk_id: str,
+
+        metadata: dict[str, Any]
+
+    ) -> None:
+
+        document_id = metadata.get(
+            "document_id"
+        )
+
+        if not document_id:
+
+            return
+
+        document_id = str(
+            document_id
+        )
+
+        if document_id not in self.document_id_index:
+
+            self.document_id_index[document_id] = set()
+
+        self.document_id_index[document_id].add(
+            chunk_id
+        )
+
+    #
+    # document_id逆引きインデックス : 削除
+    #
+
+    def _index_remove(
+
+        self,
+
+        chunk_id: str,
+
+        metadata: dict[str, Any] | None
+
+    ) -> None:
+
+        if not metadata:
+
+            return
+
+        document_id = metadata.get(
+            "document_id"
+        )
+
+        if not document_id:
+
+            return
+
+        document_id = str(
+            document_id
+        )
+
+        chunk_ids = self.document_id_index.get(
+            document_id
+        )
+
+        if not chunk_ids:
+
+            return
+
+        chunk_ids.discard(
+            chunk_id
+        )
+
+        if not chunk_ids:
+
+            del self.document_id_index[document_id]
+
+    #
+    # document_id逆引きインデックス : 再構築
+    #
+
+    def _rebuild_document_id_index(self) -> None:
+
+        self.document_id_index = {}
+
+        for chunk_id, document in self.documents.items():
+
+            metadata = document.get(
+                "metadata",
+                {}
+            )
+
+            self._index_add(
+                chunk_id,
+                metadata
+            )
+
+    #
     # Add / Update
     #
 
@@ -246,10 +374,6 @@ class BM25Service:
         metadata = metadata or {}
 
         with self.lock:
-
-            #
-            # 既存Chunkなら一旦削除
-            #
 
             if chunk_id in self.documents:
 
@@ -288,10 +412,6 @@ class BM25Service:
                 chunk_id
             ] = term_frequency
 
-            #
-            # Document Frequency
-            #
-
             for token in term_frequency:
 
                 self.document_frequency[token] = (
@@ -302,12 +422,18 @@ class BM25Service:
                     + 1
                 )
 
+            self._index_add(
+                chunk_id,
+                metadata
+            )
+
             self._recalculate_statistics()
 
             self._save()
 
             logger.debug(
-                "BM25 index added: %s",
+                "BM25 index added [%s]: %s",
+                self.collection_name,
                 chunk_id
             )
 
@@ -336,6 +462,27 @@ class BM25Service:
             if self.document_frequency[token] <= 0:
 
                 del self.document_frequency[token]
+
+        old_document = self.documents.get(
+            chunk_id
+        )
+
+        old_metadata = (
+
+            old_document.get(
+                "metadata"
+            )
+
+            if old_document
+
+            else None
+
+        )
+
+        self._index_remove(
+            chunk_id,
+            old_metadata
+        )
 
         self.term_frequencies.pop(
             chunk_id,
@@ -371,8 +518,70 @@ class BM25Service:
             self._save()
 
             logger.debug(
-                "BM25 index removed: %s",
+                "BM25 index removed [%s]: %s",
+                self.collection_name,
                 chunk_id
+            )
+
+    #
+    # document_id単位での削除
+    #
+
+    def remove_by_document_id(
+
+        self,
+
+        document_id: str
+
+    ) -> int:
+
+        if not document_id:
+
+            return 0
+
+        with self.lock:
+
+            chunk_ids = self.document_id_index.get(
+
+                document_id,
+
+                set()
+
+            )
+
+            target_chunk_ids = list(
+                chunk_ids
+            )
+
+            if not target_chunk_ids:
+
+                return 0
+
+            for chunk_id in target_chunk_ids:
+
+                self._remove_internal(
+                    chunk_id
+                )
+
+            self._recalculate_statistics()
+
+            self._save()
+
+            logger.info(
+
+                "BM25 index removed by document_id [%s] : "
+                "%s (%d chunks)",
+
+                self.collection_name,
+
+                document_id,
+
+                len(target_chunk_ids)
+
+            )
+
+            return len(
+                target_chunk_ids
             )
 
     #
@@ -414,10 +623,6 @@ class BM25Service:
             if average_length <= 0:
 
                 return []
-
-            #
-            # Query token重複除去
-            #
 
             query_tokens = list(
                 dict.fromkeys(
@@ -465,10 +670,6 @@ class BM25Service:
                     if df == 0:
 
                         continue
-
-                    #
-                    # BM25 IDF
-                    #
 
                     idf = math.log(
                         1.0
@@ -533,10 +734,6 @@ class BM25Service:
 
                 })
 
-            #
-            # BM25 score降順
-            #
-
             results.sort(
 
                 key=lambda item: item[
@@ -559,7 +756,7 @@ class BM25Service:
 
     def _save(self):
 
-        self.INDEX_PATH.parent.mkdir(
+        self.index_path.parent.mkdir(
             parents=True,
             exist_ok=True
         )
@@ -567,6 +764,8 @@ class BM25Service:
         data = {
 
             "version": 1,
+
+            "collection_name": self.collection_name,
 
             "documents": self.documents,
 
@@ -586,7 +785,7 @@ class BM25Service:
 
         temporary_path = Path(
             str(
-                self.INDEX_PATH
+                self.index_path
             ) + ".tmp"
         )
 
@@ -602,7 +801,7 @@ class BM25Service:
             )
 
         temporary_path.replace(
-            self.INDEX_PATH
+            self.index_path
         )
 
     #
@@ -611,18 +810,19 @@ class BM25Service:
 
     def _load(self):
 
-        if not self.INDEX_PATH.exists():
+        if not self.index_path.exists():
 
             logger.info(
-                "BM25 index does not exist. "
-                "Starting with empty index."
+                "BM25 index does not exist [%s]. "
+                "Starting with empty index.",
+                self.collection_name
             )
 
             return
 
         try:
 
-            with self.INDEX_PATH.open(
+            with self.index_path.open(
                 "r",
                 encoding="utf-8"
             ) as file:
@@ -653,8 +853,11 @@ class BM25Service:
                 )
             )
 
+            self._rebuild_document_id_index()
+
             logger.info(
-                "BM25 index loaded: %d documents",
+                "BM25 index loaded [%s]: %d documents",
+                self.collection_name,
                 len(
                     self.documents
                 )
@@ -663,8 +866,9 @@ class BM25Service:
         except Exception:
 
             logger.exception(
-                "Failed to load BM25 index. "
-                "Starting with empty index."
+                "Failed to load BM25 index [%s]. "
+                "Starting with empty index.",
+                self.collection_name
             )
 
             self.documents = {}
@@ -675,5 +879,73 @@ class BM25Service:
 
             self.average_document_length = 0.0
 
+            self.document_id_index = {}
 
-bm25_service = BM25Service()
+
+#
+# ------------------------------------------------------
+# Phase16 : コレクション別インスタンス
+# ------------------------------------------------------
+#
+# bm25_service                : 後方互換用のデフォルトインスタンス
+#                                （java_training用の別名としても機能）
+# bm25_service_java_training   : Java研修教材（Phase15）
+# bm25_service_instructor_ops  : 講師業務知識（Phase16）
+#
+# collection_nameからインスタンスを引けるよう、
+# レジストリ（辞書）も提供する。
+#
+
+bm25_service_java_training = BM25Service(
+
+    collection_name=settings.collection_java_training
+
+)
+
+bm25_service_instructor_ops = BM25Service(
+
+    collection_name=settings.collection_instructor_ops
+
+)
+
+#
+# 後方互換 : Phase15までのコードが `bm25_service` を
+# 直接importしているため、java_training用インスタンスを
+# デフォルトとして同名で公開する。
+#
+
+bm25_service = bm25_service_java_training
+
+_bm25_registry: dict[str, BM25Service] = {
+
+    settings.collection_java_training: bm25_service_java_training,
+
+    settings.collection_instructor_ops: bm25_service_instructor_ops
+
+}
+
+
+def get_bm25_service(
+
+    collection_name: str
+
+) -> BM25Service:
+
+    if collection_name not in _bm25_registry:
+
+        logger.warning(
+
+            "Unknown collection_name for BM25, "
+            "creating new index : %s",
+
+            collection_name
+
+        )
+
+        _bm25_registry[collection_name] = BM25Service(
+
+            collection_name=collection_name
+
+        )
+
+    return _bm25_registry[collection_name]

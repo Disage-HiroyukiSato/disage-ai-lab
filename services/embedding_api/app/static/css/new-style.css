@@ -1,0 +1,230 @@
+/* ================================
+   全体レイアウト
+================================ */
+body {
+    margin: 0;
+    font-family: "Segoe UI", "Hiragino Sans", sans-serif;
+    background: #f7f9fc;
+    color: #333;
+}
+
+.layout {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ================================
+   サイドバー
+================================ */
+.sidebar {
+    width: 280px;
+    background: #ffffff;
+    border-right: 2px solid #e0e0e0;
+    padding: 25px;
+    box-shadow: 2px 0 8px rgba(0,0,0,0.05);
+    overflow-y: auto;
+}
+
+.sidebar h2 {
+    margin-top: 0;
+    font-size: 20px;
+    color: #1976d2;
+}
+
+.sidebar h3 {
+    margin-top: 30px;
+    font-size: 18px;
+    color: #444;
+}
+
+.sidebar label {
+    display: block;
+    margin-top: 15px;
+    font-weight: bold;
+}
+
+.sidebar input {
+    width: 100%;
+    padding: 10px;
+    margin-top: 6px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 15px;
+}
+
+.new-session-btn {
+    margin-top: 20px;
+    width: 100%;
+    padding: 12px;
+    background: #ff9800;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.new-session-btn:hover {
+    background: #fb8c00;
+}
+
+/* 会話履歴 */
+.history-box {
+    margin-top: 15px;
+    max-height: 300px;
+    overflow-y: auto;
+    background: #fafafa;
+    border-radius: 6px;
+    padding: 10px;
+    border: 1px solid #ddd;
+}
+
+.history-turn {
+    padding: 10px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.history-turn:last-child {
+    border-bottom: none;
+}
+
+.off-topic-badge {
+    background: #ffe0b2;
+    color: #e65100;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+}
+
+/* ================================
+   メイン画面
+================================ */
+.main {
+    flex: 1;
+    padding: 30px;
+    overflow-y: auto;
+}
+
+/* ChatGPT風の質問入力欄 */
+.chat-input-box {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    margin-bottom: 25px;
+}
+
+.chat-input-box textarea {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid #ccc;
+    padding: 12px;
+    font-size: 16px;
+    resize: vertical;
+}
+
+.ask-btn {
+    margin-top: 15px;
+    padding: 12px 25px;
+    background: #1976d2;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.ask-btn:hover {
+    background: #1565c0;
+}
+
+/* ================================
+   回答表示
+================================ */
+.answer-section h2 {
+    margin-top: 0;
+}
+
+.answer-area {
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    white-space: pre-wrap;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+/* コードブロックを見やすく */
+.answer-area pre,
+.documents-section pre {
+    background: #272822;
+    color: #f8f8f2;
+    padding: 15px;
+    border-radius: 8px;
+    overflow-x: auto;
+}
+
+/* テーブルもポップ調に */
+.answer-area table,
+.info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+.answer-area td,
+.info-table td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    background: #fafafa;
+}
+
+/* ================================
+   検索情報
+================================ */
+.info-section {
+    margin-top: 30px;
+}
+
+.info-table td:first-child {
+    width: 150px;
+    font-weight: bold;
+}
+
+/* ================================
+   RAGドキュメント表示
+================================ */
+.documents-section {
+    margin-top: 30px;
+}
+
+.document {
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    margin-bottom: 20px;
+}
+
+.document h3 {
+    margin-top: 0;
+}
+
+/* ================================
+   戻るリンク
+================================ */
+.back-link {
+    margin-top: 40px;
+}
+
+.back-link a {
+    text-decoration: none;
+    color: #1976d2;
+    font-size: 16px;
+}
+
+.back-link a:hover {
+    text-decoration: underline;
+}

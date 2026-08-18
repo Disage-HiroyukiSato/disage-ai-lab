@@ -1,135 +1,104 @@
 <!DOCTYPE html>
-
 <html lang="ja">
-
 <head>
-
     <meta charset="UTF-8">
+    <title>Phase17 AI Assistant</title>
 
-    <title>Query</title>
+    <!-- Mermaid 必須 -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: true });
+    </script>
 
-    <link rel="stylesheet" href="/static/css/style.css">
-
+    <!-- 新しいUI用CSS（第2部で提示） -->
+    <link rel="stylesheet" href="/static/css/new-style.css">
 </head>
 
 <body>
 
-<div class="container">
+<div class="layout">
 
-<h1>質問</h1>
+    <!-- ============================
+         サイドバー
+    ============================= -->
+    <aside class="sidebar">
 
-<label>受講生ID（任意）</label>
+        <h2>⚙️ 設定</h2>
 
-<input
+        <label>受講生ID（任意）</label>
+        <input id="studentId" type="text" placeholder="student-001">
 
-    id="studentId"
+        <label>セッションID</label>
+        <input id="sessionId" type="text" readonly>
 
-    type="text"
+        <button class="new-session-btn" onclick="resetSession()">
+            🔄 新しい会話
+        </button>
 
-    placeholder="student-001"
+        <h3>📝 会話履歴</h3>
+        <div id="history" class="history-box"></div>
 
-/>
+    </aside>
 
-<label>セッションID</label>
 
-<input
+    <!-- ============================
+         メイン画面（LLMチャット風）
+    ============================= -->
+    <main class="main">
 
-    id="sessionId"
+        <!-- 質問入力欄（ChatGPT風） -->
+        <div class="chat-input-box">
+            <textarea
+                id="question"
+                placeholder="例：HTMLとは？"
+                rows="3"
+            ></textarea>
 
-    type="text"
+            <button class="ask-btn" onclick="askQuestion()">
+                🚀 質問する
+            </button>
+        </div>
 
-    readonly
+        <!-- 回答表示 -->
+        <section class="answer-section">
+            <h2>🧠 回答</h2>
+            <div id="answer" class="answer-area"></div>
+        </section>
 
-/>
+        <!-- 検索情報 -->
+        <section class="info-section">
+            <h2>🔍 検索情報</h2>
 
-<button
+            <table class="info-table">
+                <tr>
+                    <td>検索時間</td>
+                    <td id="elapsed"></td>
+                </tr>
+                <tr>
+                    <td>取得件数</td>
+                    <td id="retrieved"></td>
+                </tr>
+                <tr>
+                    <td>教材外判定</td>
+                    <td id="offTopic"></td>
+                </tr>
+            </table>
+        </section>
 
-    onclick="resetSession()"
+        <!-- 検索結果（RAGドキュメント） -->
+        <section class="documents-section">
+            <h2>📄 検索結果</h2>
+            <div id="documents"></div>
+        </section>
 
->
+        <p class="back-link">
+            <a href="/">← 戻る</a>
+        </p>
 
-新しい会話を始める
-
-</button>
-
-<h2>会話履歴</h2>
-
-<div id="history"></div>
-
-<label>質問内容</label>
-
-<input
-
-    id="question"
-
-    type="text"
-
-    placeholder="HTMLとは？"
-
-/>
-
-<button
-
-    onclick="askQuestion()"
-
->
-
-質問する
-
-</button>
-
-<h2>回答</h2>
-
-<pre id="answer"></pre>
-
-<h2>検索情報</h2>
-
-<table>
-
-<tr>
-
-<td>検索時間</td>
-
-<td id="elapsed"></td>
-
-</tr>
-
-<tr>
-
-<td>取得件数</td>
-
-<td id="retrieved"></td>
-
-</tr>
-
-<tr>
-
-<td>教材外判定</td>
-
-<td id="offTopic"></td>
-
-</tr>
-
-</table>
-
-<h2>検索結果</h2>
-
-<div id="documents"></div>
-
-<p>
-
-<a href="/">
-
-戻る
-
-</a>
-
-</p>
-
-<script src="/static/js/query.js"></script>
+    </main>
 
 </div>
 
+<script src="/static/js/query.js"></script>
 </body>
-
 </html>

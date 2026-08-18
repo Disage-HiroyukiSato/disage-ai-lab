@@ -3,6 +3,9 @@ import time
 
 from app.config import settings
 
+from app.services.answerability_gate_service import (
+    answerability_gate_service
+)
 from app.services.collection_router_service import (
     collection_router_service
 )
@@ -25,6 +28,87 @@ logger = logging.getLogger(__name__)
 
 
 class QueryService:
+
+    #
+    # ------------------------------------------------------
+    # Retrieval Fallback : 検索結果が弱いかどうかの判定
+    # ------------------------------------------------------
+    #
+    # 「弱い」の基準は、既存のReranker足切り判定
+    # （min_rerank_score）をそのまま流用する。
+    # Reranker通過後の件数が0件であれば「弱い」とみなす。
+    #
+
+    def _is_weak(
+
+        self,
+
+        gate_candidates: list
+
+    ) -> bool:
+
+        return len(gate_candidates) == 0
+
+    #
+    # ------------------------------------------------------
+    # 検索 + Reranker を1セットにしたヘルパー
+    # ------------------------------------------------------
+    #
+
+    def _search_and_rerank(
+
+        self,
+
+        search_query: str,
+
+        collection_name: str,
+
+        current_chapter: str,
+
+        limit: int
+
+    ):
+
+        retrieval_result = multi_query_retrieval_service.search(
+            question=search_query,
+            limit=settings.retrieval_candidate_size,
+            collection_name=collection_name,
+            current_chapter=current_chapter
+        )
+
+        if retrieval_result.total == 0:
+
+            return retrieval_result, [], []
+
+        reranked_items = reranker_service.rerank(
+            question=search_query,
+            items=retrieval_result.items,
+            limit=limit
+        )
+
+        #
+        # Answerability Gate向けの緩和候補
+        # ------------------------------------------------------
+        #
+        # min_rerank_scoreで足切りされる前の
+        # retrieval_result.items（既にitem.scoreが
+        # rerank()実行時に設定済み）からスコア上位3件を取得する。
+        #
+        # reranked_itemsが0件（min_rerank_score未満のみ）の
+        # 場合でも、Gateはこの緩和候補を使って
+        # 「実は答えられる資料が上位に埋もれていないか」を
+        # 確認できる。
+        #
+
+        gate_candidates = reranker_service.rerank_relaxed(
+
+            scored_items=retrieval_result.items,
+
+            limit=answerability_gate_service.TOP_N
+
+        )
+
+        return retrieval_result, reranked_items, gate_candidates
 
     def ask(
         self,
@@ -127,15 +211,6 @@ class QueryService:
 
         )
 
-        #
-        # Phase17 : 教材外判定
-        #
-        # 元の質問（書き換え前）に対して判定する。
-        # 書き換え後の質問は教材寄りの表現に補完されて
-        # しまう可能性があり、受講生が実際に打った言葉の
-        # 教材外らしさを見たいため。
-        #
-
         is_off_topic = off_topic_router_service.is_off_topic(
 
             normalized_question
@@ -149,23 +224,20 @@ class QueryService:
         )
 
         #
-        # Phase17 : Query Rewriting
+        # Knowledge Query分離 + 回答形式判定
+        # ------------------------------------------------------
         #
-        # 「今の話の続きで」のような指示語を含む質問を、
-        # 会話履歴を踏まえて自己完結型に書き換える。
+        # 質問から「検索に使う知識部分（knowledge_query）」と
+        # 「求められている出力形式（response_format）」を
+        # 1回のLLM呼び出しで分離する。
         #
-        # 書き換え後の質問（search_query）は検索・Rerankerに
-        # のみ使用し、最終回答生成のプロンプトには
-        # 元の質問（question）を使う。
-        #
-        # 履歴が無い場合はLLM呼び出しをスキップし、
-        # normalized_questionをそのまま返す
-        # （query_rewrite_service内部でハンドリング済み）。
+        # 会話履歴がある場合は、同じ呼び出しの中で
+        # 自己完結化（指示語の解決）も行われる。
         #
 
-        rewrite_start = time.perf_counter()
+        analyze_start = time.perf_counter()
 
-        search_query = query_rewrite_service.rewrite(
+        knowledge_query, response_format = query_rewrite_service.analyze(
 
             normalized_question,
 
@@ -173,31 +245,101 @@ class QueryService:
 
         )
 
-        rewrite_elapsed = int(
+        analyze_elapsed = int(
             (
-                time.perf_counter() - rewrite_start
+                time.perf_counter() - analyze_start
             ) * 1000
         )
 
         logger.info(
-            "Query Rewrite Time : %d ms",
-            rewrite_elapsed
+            "Query Analysis Time : %d ms",
+            analyze_elapsed
+        )
+
+        logger.info(
+            "Knowledge Query : %s",
+            knowledge_query
+        )
+
+        logger.info(
+            "Response Format : %s",
+            response_format
         )
 
         #
-        # Multi Query Retrieval
+        # Retrieval Fallback（二段階検索）
+        # ------------------------------------------------------
         #
-        # 検索クエリは書き換え後（search_query）を使用する。
+        # 1段階目 : knowledge_query（表現形式を除いた検索専用の
+        #           質問）で検索・Rerankerを実行する。
+        #
+        # 1段階目が弱い（Reranker通過0件）場合、
+        #
+        # 2段階目 : 正規化後の元の質問（normalized_question）で
+        #           再検索する。knowledge_queryの抽出が
+        #           不適切だった場合の保険として機能する。
+        #
+        # 2段階目も弱い場合、資料外として回答を拒否する。
         #
 
         retrieval_start = time.perf_counter()
 
-        retrieval_result = multi_query_retrieval_service.search(
-            question=search_query,
-            limit=settings.retrieval_candidate_size,
+        (
+
+            retrieval_result,
+
+            reranked_items,
+
+            gate_candidates
+
+        ) = self._search_and_rerank(
+
+            search_query=knowledge_query,
+
             collection_name=collection_name,
-            current_chapter=current_chapter
+
+            current_chapter=current_chapter,
+
+            limit=limit
+
         )
+
+        fallback_used = False
+
+        if self._is_weak(
+
+            gate_candidates
+
+        ):
+
+            logger.info(
+
+                "Retrieval Fallback : knowledge_query search was "
+                "weak. Retrying with normalized_question."
+
+            )
+
+            fallback_used = True
+
+            (
+
+                retrieval_result,
+
+                reranked_items,
+
+                gate_candidates
+
+            ) = self._search_and_rerank(
+
+                search_query=normalized_question,
+
+                collection_name=collection_name,
+
+                current_chapter=current_chapter,
+
+                limit=limit
+
+            )
 
         retrieval_elapsed = int(
             (
@@ -206,8 +348,13 @@ class QueryService:
         )
 
         logger.info(
-            "Multi Query Retrieval Time : %d ms",
+            "Retrieval + Rerank Time (fallback included) : %d ms",
             retrieval_elapsed
+        )
+
+        logger.info(
+            "Fallback Used : %s",
+            fallback_used
         )
 
         logger.info(
@@ -215,7 +362,20 @@ class QueryService:
             retrieval_result.total
         )
 
-        if retrieval_result.total == 0:
+        logger.info(
+            "Reranked : %d",
+            len(reranked_items)
+        )
+
+        #
+        # 二段階検索を経ても弱い場合は資料外として拒否する。
+        #
+
+        if self._is_weak(
+
+            gate_candidates
+
+        ):
 
             total_elapsed = int(
                 (
@@ -224,7 +384,8 @@ class QueryService:
             )
 
             logger.info(
-                "No documents retrieved."
+                "Both retrieval attempts were weak. "
+                "Rejecting as out-of-scope."
             )
 
             logger.info(
@@ -245,7 +406,7 @@ class QueryService:
 
                 normalized_question=normalized_question,
 
-                retrieved_items=[],
+                retrieved_items=retrieval_result.items,
 
                 reranked_items=[],
 
@@ -296,54 +457,58 @@ class QueryService:
                 "documents": []
             }
 
-        logger.info("----------------------------------------")
-        logger.info("Retrieved Documents")
-        logger.info("----------------------------------------")
-
-        for index, item in enumerate(
-            retrieval_result.items,
-            start=1
-        ):
-
-            logger.info(
-                "[%d] distance=%.4f",
-                index,
-                item.distance
-            )
-
-            logger.info(
-                "Metadata : %s",
-                item.metadata
-            )
-
         #
-        # Reranker
+        # Answerability Gate
+        # ------------------------------------------------------
         #
-        # 質問文は検索と同じくsearch_query（書き換え後）を使う。
-        # 検索とRerankerで異なる質問文を使うと、Rerankerが
-        # 検索意図とズレたスコアを付けてしまうため一貫させる。
+        # Reranker通過後の資料であっても、単語の一致だけで
+        # スコアを超えてしまうケースがある。
+        #
+        # LLMへ渡す直前の最終防衛ラインとして、軽量LLMで
+        # 「この資料は実際に質問へ答えているか」を判定する。
+        #
+        # 判定に使う質問は、検索・Rerankerと同じ質問文
+        # （knowledge_query、Fallback使用時はnormalized_question）
+        # に揃える。
         #
 
-        rerank_start = time.perf_counter()
+        gate_query = (
 
-        reranked_items = reranker_service.rerank(
-            question=search_query,
-            items=retrieval_result.items,
-            limit=limit
+            normalized_question
+
+            if fallback_used
+
+            else knowledge_query
+
         )
 
-        rerank_elapsed = int(
+        gate_start = time.perf_counter()
+
+        is_answerable = answerability_gate_service.is_answerable(
+
+            gate_query,
+
+            gate_candidates
+
+        )
+
+        gate_elapsed = int(
             (
-                time.perf_counter() - rerank_start
+                time.perf_counter() - gate_start
             ) * 1000
         )
 
         logger.info(
-            "Reranker Time : %d ms",
-            rerank_elapsed
+            "Answerability Gate Time : %d ms",
+            gate_elapsed
         )
 
-        if not reranked_items:
+        logger.info(
+            "Answerability Gate Result : %s",
+            is_answerable
+        )
+
+        if not is_answerable:
 
             total_elapsed = int(
                 (
@@ -352,7 +517,7 @@ class QueryService:
             )
 
             logger.info(
-                "No documents passed reranker threshold."
+                "Answerability Gate rejected the candidates."
             )
 
             logger.info(
@@ -365,7 +530,7 @@ class QueryService:
                 "========================================"
             )
 
-            answer = "資料から回答できませんでした。"
+            answer = "資料からは確認できません。"
 
             search_log_service.log(
 
@@ -375,13 +540,13 @@ class QueryService:
 
                 retrieved_items=retrieval_result.items,
 
-                reranked_items=[],
+                reranked_items=gate_candidates,
 
                 answer=answer,
 
                 retrieval_elapsed_ms=retrieval_elapsed,
 
-                rerank_elapsed_ms=rerank_elapsed,
+                rerank_elapsed_ms=0,
 
                 llm_elapsed_ms=0,
 
@@ -424,29 +589,105 @@ class QueryService:
                 "documents": []
             }
 
+        #
+        # Context生成
+        # ------------------------------------------------------
+        #
+        # Answerability GateがYesと判定した資料集合
+        # （gate_candidates）をそのままLLMのコンテキストとして
+        # 使用する。
+        #
+        # reranked_items（min_rerank_score通過分）は
+        # CrossEncoderのスコアリング誤り（短い無意味な文字列に
+        # 高スコアを付ける等）で、本来関連度の高い資料を
+        # 取りこぼすことがあるため、Gateが実際に「答えられる」と
+        # 判定した資料を優先する。
+        #
+
         contexts = [
 
             item.document
 
-            for item in reranked_items
+            for item in gate_candidates
 
         ]
+
+        #
+        # デバッグ : 最終的にLLM（メイン回答生成）へ渡される
+        # contextsの内訳をログに残す。
+        #
+
+        logger.info(
+
+            "----------------------------------------"
+
+        )
+
+        logger.info(
+
+            "Final Contexts for LLM (post-Gate)"
+
+        )
+
+        logger.info(
+
+            "----------------------------------------"
+
+        )
+
+        for index, item in enumerate(
+
+            gate_candidates,
+
+            start=1
+
+        ):
+
+            metadata = item.metadata or {}
+
+            logger.info(
+
+                "[Context %d] document_id=%s chunk_no=%s",
+
+                index,
+
+                metadata.get(
+
+                    "document_id",
+
+                    ""
+
+                ),
+
+                metadata.get(
+
+                    "chunk_no",
+
+                    ""
+
+                )
+
+            )
+
+        logger.info(
+
+            "----------------------------------------"
+
+        )
 
         #
         # Prompt生成
         #
         # 最終回答生成には元の質問（question）を使う。
-        # 受講生が実際に打った表現をLLMに見せることで、
-        # 「今の話の続きで」といった自然な会話継続に
-        # 沿った回答になるようにする
-        # （検索用に書き換えたsearch_queryはここでは使わない）。
+        # response_formatに応じた出力指示を渡す。
         #
 
         prompt = prompt_builder.build(
             question,
             contexts,
             conversation_turns=conversation_turns,
-            is_off_topic=is_off_topic
+            is_off_topic=is_off_topic,
+            response_format=response_format
         )
 
         if settings.log_prompt:
@@ -499,8 +740,18 @@ class QueryService:
         )
 
         logger.info(
-            "Search Query (rewritten) : %s",
-            search_query
+            "Knowledge Query : %s",
+            knowledge_query
+        )
+
+        logger.info(
+            "Response Format : %s",
+            response_format
+        )
+
+        logger.info(
+            "Fallback Used : %s",
+            fallback_used
         )
 
         logger.info(
@@ -514,23 +765,29 @@ class QueryService:
         )
 
         logger.info(
-            "Reranked Count : %d",
+            "Reranked Count (strict) : %d",
             len(reranked_items)
         )
 
         logger.info(
-            "Query Rewrite Time : %d ms",
-            rewrite_elapsed
+            "Gate Candidates Count : %d",
+            len(gate_candidates)
         )
 
         logger.info(
-            "Retrieval Time : %d ms",
+            "Answerability Gate : %s (%d ms)",
+            is_answerable,
+            gate_elapsed
+        )
+
+        logger.info(
+            "Query Analysis Time : %d ms",
+            analyze_elapsed
+        )
+
+        logger.info(
+            "Retrieval Time (fallback included) : %d ms",
             retrieval_elapsed
-        )
-
-        logger.info(
-            "Reranker Time : %d ms",
-            rerank_elapsed
         )
 
         logger.info(
@@ -556,13 +813,13 @@ class QueryService:
 
             retrieved_items=retrieval_result.items,
 
-            reranked_items=reranked_items,
+            reranked_items=gate_candidates,
 
             answer=answer,
 
             retrieval_elapsed_ms=retrieval_elapsed,
 
-            rerank_elapsed_ms=rerank_elapsed,
+            rerank_elapsed_ms=0,
 
             llm_elapsed_ms=llm_elapsed,
 
@@ -571,14 +828,6 @@ class QueryService:
             cache_hit=retrieval_result.cache_hit
 
         )
-
-        #
-        # Phase17 : 会話履歴保存
-        #
-        # 保存する質問文は元の質問（question）とする。
-        # 次のターンのQuery Rewritingでも、受講生が
-        # 実際に発した表現を履歴として参照させるため。
-        #
 
         conversation_service.append(
 
@@ -608,10 +857,11 @@ class QueryService:
 
         return {
             "answer": answer,
-            "documents": reranked_items,
-            "retrieved_count": len(reranked_items),
+            "documents": gate_candidates,
+            "retrieved_count": len(gate_candidates),
             "elapsed_ms": total_elapsed,
-            "is_off_topic": is_off_topic
+            "is_off_topic": is_off_topic,
+            "response_format": response_format
         }
 
 

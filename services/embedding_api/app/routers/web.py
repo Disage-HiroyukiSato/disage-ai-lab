@@ -22,7 +22,6 @@ templates = Jinja2Templates(
 
 )
 
-
 @router.get(
 
     "/",
@@ -87,5 +86,28 @@ async def query(
         request=request,
 
         name="query.html"
+
+    )
+
+
+@router.get(
+
+    "/history-ui",
+
+    response_class=HTMLResponse
+
+)
+
+async def history(
+
+    request: Request
+
+):
+
+    return templates.TemplateResponse(
+
+        request=request,
+
+        name="history.html"
 
     )

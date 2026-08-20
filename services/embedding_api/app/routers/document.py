@@ -4,27 +4,38 @@ from fastapi import APIRouter
 from fastapi import HTTPException
 
 from pydantic import BaseModel
+from pydantic import Field
 
 from app.config import settings
-from app.services.embedding_service import embedding_service
-from app.services.cache_service import cache_service
+
+from app.services.embedding_service import (
+    embedding_service
+)
+
+from app.services.cache_service import (
+    cache_service
+)
+
 
 logger = logging.getLogger(__name__)
+
 
 router = APIRouter(
 
     prefix="/documents",
 
     tags=[
-
         "Documents"
-
     ]
 
 )
 
 
 class DocumentRequest(BaseModel):
+
+    # ======================================================
+    # Document
+    # ======================================================
 
     document_id: str
 
@@ -34,9 +45,9 @@ class DocumentRequest(BaseModel):
 
     keywords: str = ""
 
-    #
+    # ======================================================
     # Phase15 : Java教材PDF RAG化
-    #
+    # ======================================================
 
     chapter: str = ""
 
@@ -44,96 +55,167 @@ class DocumentRequest(BaseModel):
 
     language: str = ""
 
+    # ======================================================
+    # Page Reference
+    # ======================================================
     #
+    # 原資料上のページ情報。
+    #
+    # 例：
+    #     "p.12"
+    #     "12"
+    #     "12-13"
+    #
+    # 正式なmetadataキーは
+    #
+    #     page_reference
+    #
+    # とする。
+    #
+    # この値はEmbeddingService -> ChunkServiceを経由して
+    # 各Chunkのmetadataへ引き継がれる。
+    #
+    # ======================================================
+
+    page_reference: str | None = None
+
+    # ======================================================
     # Phase16 : 複数コレクション対応
+    # ======================================================
     #
     # 登録先コレクションを選択する。
     #
-    # 未指定時はsettings.chroma_collection
-    # （既存の単一コレクション運用、実質java_training）
-    # へ登録される後方互換動作となる。
+    # 未指定時はsettings.chroma_collectionへ登録する。
     #
-    # 例 : "java_training" | "instructor_ops"
+    # 例：
     #
+    #     java_training
+    #     instructor_ops
+    #
+    # ======================================================
 
     collection: str = ""
 
-    text: str
+    # ======================================================
+    # Document Text
+    # ======================================================
 
+    text: str = Field(
 
-@router.post("")
+        min_length=1,
 
-async def register(
-
-    request: DocumentRequest
-
-):
-
-    logger.info(
-
-        "Register document (collection=%s)",
-
-        request.collection or "(default)"
+        description=(
+            "RAGへ登録するテキスト"
+        )
 
     )
 
+
+@router.post("")
+async def register(
+    request: DocumentRequest
+):
+
+    logger.info(
+        "Register document "
+        "(document_id=%s, collection=%s, page=%s)",
+
+        request.document_id,
+
+        request.collection or "(default)",
+
+        request.page_reference or "(none)"
+
+    )
+
+    # ======================================================
+    # Metadata
+    # ======================================================
+    #
+    # RAG登録時のメタデータをここで一元的に構築する。
+    #
+    # page_referenceについては、
+    # Noneの場合はmetadataへ無理に登録しない。
+    #
+    # ======================================================
+
+    metadata = {
+
+        "title": request.title,
+
+        "category": request.category,
+
+        "keywords": request.keywords,
+
+        "chapter": request.chapter,
+
+        "section": request.section,
+
+        "language": request.language
+
+    }
+
+    if request.page_reference is not None:
+
+        metadata[
+            "page_reference"
+        ] = request.page_reference
+
+    # ======================================================
+    # Register
+    # ======================================================
+
     try:
 
-        chunk_count = embedding_service.register(
+        chunk_count = (
+            embedding_service.register(
 
-            document_id=request.document_id,
+                document_id=request.document_id,
 
-            text=request.text,
+                text=request.text,
 
-            metadata={
+                metadata=metadata,
 
-                "title": request.title,
+                collection_name=(
 
-                "category": request.category,
+                    request.collection
 
-                "keywords": request.keywords,
+                    or None
 
-                "chapter": request.chapter,
-
-                "section": request.section,
-
-                "language": request.language
-
-            },
-
-            collection_name=(
-
-                request.collection
-
-                or None
+                )
 
             )
-
         )
 
         logger.info(
 
-            "Chunks : %d",
+            "Document registered "
+            "(document_id=%s, chunks=%d, "
+            "page=%s)",
 
-            chunk_count
+            request.document_id,
+
+            chunk_count,
+
+            request.page_reference or "(none)"
 
         )
 
-        #
+        # ==================================================
         # Search Cache : 無効化
+        # ==================================================
         #
-        # 新しい文書が登録されると、既存の検索キャッシュは
-        # 古い検索結果（新文書を含まない結果）を返し続けて
-        # しまうため、登録のたびに検索キャッシュ全体を
-        # クリアする。
+        # 新しい文書が登録された場合、
+        # 既存キャッシュには新文書が反映されないため、
+        # 登録成功後に検索キャッシュをクリアする。
         #
-        # TTLによる自然失効に加えて、即時性が必要なため
-        # 明示的にクリアする。
-        #
+        # ==================================================
 
         if settings.enable_search_cache:
 
-            cleared = cache_service.clear_all()
+            cleared = (
+                cache_service.clear_all()
+            )
 
             logger.info(
 
@@ -143,11 +225,17 @@ async def register(
 
             )
 
+        # ==================================================
+        # Response
+        # ==================================================
+
         return {
 
             "success": True,
 
-            "document_id": request.document_id,
+            "document_id": (
+                request.document_id
+            ),
 
             "collection": (
 
@@ -157,11 +245,23 @@ async def register(
 
             ),
 
-            "chunks": chunk_count
+            "chunks": chunk_count,
+
+            "page_reference": (
+                request.page_reference
+            )
 
         }
 
     except Exception as ex:
+
+        logger.exception(
+
+            "Document registration failed : %s",
+
+            request.document_id
+
+        )
 
         raise HTTPException(
 

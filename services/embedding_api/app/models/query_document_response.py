@@ -9,4 +9,6 @@ class QueryDocumentResponse(BaseModel):
 
     distance: float
 
+    page: str | None = None
+
     metadata: dict

@@ -4,10 +4,25 @@ from pydantic import BaseModel
 
 from app.config import settings
 
-from app.models.query_response import QueryResponse
-from app.models.query_document_response import QueryDocumentResponse
+from app.models.query_response import (
+    QueryResponse
+)
 
-from app.services.query_service import query_service
+from app.models.query_document_response import (
+    QueryDocumentResponse
+)
+
+from app.models.query_source_response import (
+    QuerySourceResponse
+)
+
+from app.models.query_metadata_response import (
+    QueryMetadataResponse
+)
+
+from app.services.query_service import (
+    query_service
+)
 
 
 router = APIRouter(
@@ -25,37 +40,46 @@ class QueryRequest(BaseModel):
 
     limit: int = settings.default_limit
 
-    #
+    # ======================================================
     # Phase17 : 研修用AIアシスタント
+    # ======================================================
     #
-    # student_id : 受講生ID。指定するとstudent_progressを
-    #              参照し、現在の学習chapterで検索結果を
-    #              ブーストする。未指定時はブースト無効。
+    # student_id
     #
-    # session_id : 会話セッションID。マルチターン対話の
-    #              履歴をひも付けるためのキー。未指定時は
-    #              履歴の保存・参照ともに行わない
-    #              （単発Q&Aとして動作、既存動作と同じ）。
+    # 受講生ID。
     #
+    # 指定された場合、
+    # 現在の学習chapterを検索処理に利用する。
+    #
+    # ======================================================
 
     student_id: str | None = None
+
+    # ======================================================
+    # session_id
+    # ======================================================
+    #
+    # 会話セッションID。
+    #
+    # 指定された場合、
+    # 過去の会話履歴を取得・保存する。
+    #
+    # ======================================================
 
     session_id: str | None = None
 
 
 @router.post(
-
     "",
-
     response_model=QueryResponse
-
 )
-
 async def query(
-
     request: QueryRequest
-
 ):
+
+    # ======================================================
+    # Query Service
+    # ======================================================
 
     result = query_service.ask(
 
@@ -69,15 +93,138 @@ async def query(
 
     )
 
-    return QueryResponse(
+    # ======================================================
+    # Metadata
+    # ======================================================
+    #
+    # 処理時間や検索件数など、
+    # 回答本文とは別のシステム情報。
+    #
+    # QueryServiceで項目名を統一しているため、
+    # ここでは変換・推測を行わず、そのまま受け取る。
+    #
+    # ======================================================
 
-        answer=result["answer"],
+    result_metadata = (
+        result.get(
+            "metadata",
+            {}
+        )
+    )
 
-        elapsed_ms=result["elapsed_ms"],
+    metadata = QueryMetadataResponse(
 
-        retrieved_count=result["retrieved_count"],
+        query_analysis_elapsed_ms=
+            result_metadata.get(
+                "query_analysis_elapsed_ms",
+                0
+            ),
 
-        documents=[
+        retrieval_elapsed_ms=
+            result_metadata.get(
+                "retrieval_elapsed_ms",
+                0
+            ),
+
+        answerability_elapsed_ms=
+            result_metadata.get(
+                "answerability_elapsed_ms",
+                0
+            ),
+
+        llm_elapsed_ms=
+            result_metadata.get(
+                "llm_elapsed_ms",
+                0
+            ),
+
+        total_elapsed_ms=
+            result_metadata.get(
+                "total_elapsed_ms",
+                0
+            ),
+
+        cache_hit=
+            result_metadata.get(
+                "cache_hit",
+                False
+            ),
+
+        fallback_used=
+            result_metadata.get(
+                "fallback_used",
+                False
+            ),
+
+        retrieved_count=
+            result_metadata.get(
+                "retrieved_count",
+                0
+            ),
+
+        gate_candidate_count=
+            result_metadata.get(
+                "gate_candidate_count",
+                0
+            ),
+
+        final_context_count=
+            result_metadata.get(
+                "final_context_count",
+                0
+            )
+
+    )
+
+    # ======================================================
+    # Documents
+    # ======================================================
+    #
+    # RAG検索結果の詳細情報。
+    #
+    # documentsは検索結果そのものを表し、
+    # sourcesとは役割を分ける。
+    #
+    # ======================================================
+
+    documents = []
+
+    for item in result.get(
+        "documents",
+        []
+    ):
+
+        metadata_item = (
+            item.metadata
+            if item.metadata
+            else {}
+        )
+
+        # --------------------------------------------------
+        # Page
+        # --------------------------------------------------
+        #
+        # QueryDocumentResponseは既存仕様との互換性を
+        # 維持するためpageを使用する。
+        #
+        # 正式なページ情報の基準は
+        # metadata["page_reference"]。
+        #
+        # --------------------------------------------------
+
+        page = (
+            metadata_item.get(
+                "page_reference"
+            )
+            or metadata_item.get(
+                "page"
+            )
+            or metadata_item.get(
+                "page_number"
+            )
+        )
+
+        documents.append(
 
             QueryDocumentResponse(
 
@@ -87,12 +234,184 @@ async def query(
 
                 distance=item.distance,
 
-                metadata=item.metadata
+                page=page,
+
+                metadata=metadata_item
 
             )
 
-            for item in result["documents"]
+        )
 
-        ]
+    # ======================================================
+    # Sources
+    # ======================================================
+    #
+    # 回答の根拠・参考資料。
+    #
+    # QueryServiceではpage_referenceを正式名称として
+    # 使用する。
+    #
+    # ここでpageへ変換しない。
+    #
+    # ======================================================
+
+    sources = []
+
+    for source in result.get(
+        "sources",
+        []
+    ):
+
+        sources.append(
+
+            QuerySourceResponse(
+
+                document_id=str(
+                    source.get(
+                        "document_id",
+                        ""
+                    )
+                ),
+
+                chunk_no=str(
+                    source.get(
+                        "chunk_no",
+                        ""
+                    )
+                ),
+
+                title=str(
+                    source.get(
+                        "title",
+                        ""
+                    )
+                ),
+
+                page_reference=source.get(
+                    "page_reference"
+                )
+
+            )
+
+        )
+
+    # ======================================================
+    # Source Pages
+    # ======================================================
+    #
+    # 回答の根拠となったページ。
+    #
+    # QueryServiceでRAG metadataから抽出済み。
+    #
+    # Routerではページ番号を生成・推測しない。
+    #
+    # ======================================================
+
+    source_pages = result.get(
+        "source_pages",
+        []
+    )
+
+    # ======================================================
+    # Answerability
+    # ======================================================
+    #
+    # FULL / PARTIAL / NONE
+    #
+    # QueryServiceで判定された結果をそのまま返す。
+    #
+    # Routerではbool化しない。
+    #
+    # ======================================================
+
+    answerability_status = (
+        result.get(
+            "answerability_status"
+        )
+    )
+
+    answerability_reason = (
+        result.get(
+            "answerability_reason",
+            ""
+        )
+    )
+
+    # ======================================================
+    # Compatibility Values
+    # ======================================================
+    #
+    # QueryResponseに残している既存互換項目。
+    #
+    # 新しい処理時間情報はmetadataを正式な格納先とする。
+    #
+    # ======================================================
+
+    elapsed_ms = (
+        metadata.total_elapsed_ms
+    )
+
+    retrieved_count = (
+        metadata.retrieved_count
+    )
+
+    # ======================================================
+    # Response
+    # ======================================================
+
+    return QueryResponse(
+
+        # --------------------------------------------------
+        # 回答本文
+        # --------------------------------------------------
+
+        answer=result.get(
+            "answer",
+            ""
+        ),
+
+        # --------------------------------------------------
+        # 回答の根拠
+        # --------------------------------------------------
+
+        sources=sources,
+
+        # --------------------------------------------------
+        # 根拠ページ
+        # --------------------------------------------------
+
+        source_pages=source_pages,
+
+        # --------------------------------------------------
+        # 互換項目
+        # --------------------------------------------------
+
+        elapsed_ms=elapsed_ms,
+
+        retrieved_count=retrieved_count,
+
+        # --------------------------------------------------
+        # RAG検索結果
+        # --------------------------------------------------
+
+        documents=documents,
+
+        # --------------------------------------------------
+        # Answerability
+        # --------------------------------------------------
+
+        answerability_status=(
+            answerability_status
+        ),
+
+        answerability_reason=(
+            answerability_reason
+        ),
+
+        # --------------------------------------------------
+        # システム情報
+        # --------------------------------------------------
+
+        metadata=metadata
 
     )

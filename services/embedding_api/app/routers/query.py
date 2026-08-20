@@ -4,7 +4,9 @@ from pydantic import BaseModel
 
 from app.config import settings
 
-from app.models.query_response import QueryResponse
+from app.models.query_response import (
+    QueryResponse
+)
 
 from app.models.query_document_response import (
     QueryDocumentResponse
@@ -92,92 +94,15 @@ async def query(
     )
 
     # ======================================================
-    # Documents
-    # ======================================================
-
-    documents = []
-
-    for item in result.get(
-        "documents",
-        []
-    ):
-
-        metadata = (
-            item.metadata
-            if item.metadata
-            else {}
-        )
-
-        page = (
-            metadata.get("page")
-            or metadata.get("page_number")
-            or metadata.get("page_reference")
-        )
-
-        documents.append(
-
-            QueryDocumentResponse(
-
-                document=item.document,
-
-                score=item.score,
-
-                distance=item.distance,
-
-                page=page,
-
-                metadata=metadata
-
-            )
-
-        )
-
-    # ======================================================
-    # Sources
-    # ======================================================
-
-    sources = []
-
-    for source in result.get(
-        "sources",
-        []
-    ):
-
-        sources.append(
-
-            QuerySourceResponse(
-
-                document_id=str(
-                    source.get(
-                        "document_id",
-                        ""
-                    )
-                ),
-
-                chunk_no=str(
-                    source.get(
-                        "chunk_no",
-                        ""
-                    )
-                ),
-
-                title=str(
-                    source.get(
-                        "title",
-                        ""
-                    )
-                ),
-
-                page=source.get(
-                    "page"
-                )
-
-            )
-
-        )
-
-    # ======================================================
     # Metadata
+    # ======================================================
+    #
+    # 処理時間や検索件数など、
+    # 回答本文とは別のシステム情報。
+    #
+    # QueryServiceで項目名を統一しているため、
+    # ここでは変換・推測を行わず、そのまま受け取る。
+    #
     # ======================================================
 
     result_metadata = (
@@ -216,10 +141,7 @@ async def query(
         total_elapsed_ms=
             result_metadata.get(
                 "total_elapsed_ms",
-                result.get(
-                    "elapsed_ms",
-                    0
-                )
+                0
             ),
 
         cache_hit=
@@ -237,10 +159,7 @@ async def query(
         retrieved_count=
             result_metadata.get(
                 "retrieved_count",
-                result.get(
-                    "retrieved_count",
-                    0
-                )
+                0
             ),
 
         gate_candidate_count=
@@ -255,6 +174,185 @@ async def query(
                 0
             )
 
+    )
+
+    # ======================================================
+    # Documents
+    # ======================================================
+    #
+    # RAG検索結果の詳細情報。
+    #
+    # documentsは検索結果そのものを表し、
+    # sourcesとは役割を分ける。
+    #
+    # ======================================================
+
+    documents = []
+
+    for item in result.get(
+        "documents",
+        []
+    ):
+
+        metadata_item = (
+            item.metadata
+            if item.metadata
+            else {}
+        )
+
+        # --------------------------------------------------
+        # Page
+        # --------------------------------------------------
+        #
+        # QueryDocumentResponseは既存仕様との互換性を
+        # 維持するためpageを使用する。
+        #
+        # 正式なページ情報の基準は
+        # metadata["page_reference"]。
+        #
+        # --------------------------------------------------
+
+        page = (
+            metadata_item.get(
+                "page_reference"
+            )
+            or metadata_item.get(
+                "page"
+            )
+            or metadata_item.get(
+                "page_number"
+            )
+        )
+
+        documents.append(
+
+            QueryDocumentResponse(
+
+                document=item.document,
+
+                score=item.score,
+
+                distance=item.distance,
+
+                page=page,
+
+                metadata=metadata_item
+
+            )
+
+        )
+
+    # ======================================================
+    # Sources
+    # ======================================================
+    #
+    # 回答の根拠・参考資料。
+    #
+    # QueryServiceではpage_referenceを正式名称として
+    # 使用する。
+    #
+    # ここでpageへ変換しない。
+    #
+    # ======================================================
+
+    sources = []
+
+    for source in result.get(
+        "sources",
+        []
+    ):
+
+        sources.append(
+
+            QuerySourceResponse(
+
+                document_id=str(
+                    source.get(
+                        "document_id",
+                        ""
+                    )
+                ),
+
+                chunk_no=str(
+                    source.get(
+                        "chunk_no",
+                        ""
+                    )
+                ),
+
+                title=str(
+                    source.get(
+                        "title",
+                        ""
+                    )
+                ),
+
+                page_reference=source.get(
+                    "page_reference"
+                )
+
+            )
+
+        )
+
+    # ======================================================
+    # Source Pages
+    # ======================================================
+    #
+    # 回答の根拠となったページ。
+    #
+    # QueryServiceでRAG metadataから抽出済み。
+    #
+    # Routerではページ番号を生成・推測しない。
+    #
+    # ======================================================
+
+    source_pages = result.get(
+        "source_pages",
+        []
+    )
+
+    # ======================================================
+    # Answerability
+    # ======================================================
+    #
+    # FULL / PARTIAL / NONE
+    #
+    # QueryServiceで判定された結果をそのまま返す。
+    #
+    # Routerではbool化しない。
+    #
+    # ======================================================
+
+    answerability_status = (
+        result.get(
+            "answerability_status"
+        )
+    )
+
+    answerability_reason = (
+        result.get(
+            "answerability_reason",
+            ""
+        )
+    )
+
+    # ======================================================
+    # Compatibility Values
+    # ======================================================
+    #
+    # QueryResponseに残している既存互換項目。
+    #
+    # 新しい処理時間情報はmetadataを正式な格納先とする。
+    #
+    # ======================================================
+
+    elapsed_ms = (
+        metadata.total_elapsed_ms
+    )
+
+    retrieved_count = (
+        metadata.retrieved_count
     )
 
     # ======================================================
@@ -273,32 +371,27 @@ async def query(
         ),
 
         # --------------------------------------------------
-        # 根拠
+        # 回答の根拠
         # --------------------------------------------------
 
         sources=sources,
 
-        source_pages=result.get(
-            "source_pages",
-            []
-        ),
+        # --------------------------------------------------
+        # 根拠ページ
+        # --------------------------------------------------
+
+        source_pages=source_pages,
 
         # --------------------------------------------------
         # 互換項目
         # --------------------------------------------------
 
-        elapsed_ms=result.get(
-            "elapsed_ms",
-            metadata.total_elapsed_ms
-        ),
+        elapsed_ms=elapsed_ms,
 
-        retrieved_count=result.get(
-            "retrieved_count",
-            metadata.retrieved_count
-        ),
+        retrieved_count=retrieved_count,
 
         # --------------------------------------------------
-        # 検索結果
+        # RAG検索結果
         # --------------------------------------------------
 
         documents=documents,
@@ -307,16 +400,13 @@ async def query(
         # Answerability
         # --------------------------------------------------
 
-        answerability_status=
-            result.get(
-                "answerability_status"
-            ),
+        answerability_status=(
+            answerability_status
+        ),
 
-        answerability_reason=
-            result.get(
-                "answerability_reason",
-                ""
-            ),
+        answerability_reason=(
+            answerability_reason
+        ),
 
         # --------------------------------------------------
         # システム情報

@@ -3,6 +3,11 @@ import time
 
 from app.config import settings
 
+from app.models.answerability import (
+    AnswerabilityResult,
+    AnswerabilityStatus
+)
+
 from app.services.answerability_gate_service import (
     answerability_gate_service
 )
@@ -128,9 +133,9 @@ class QueryService:
     # Source Information
     # ======================================================
     #
-    # 回答本文と資料情報を分離する。
+    # 回答本文とは分離した、回答の根拠・参考資料。
     #
-    # sourcesには「回答の根拠・参考情報」を格納する。
+    # page_referenceはRAG metadataを正とする。
     #
     # ======================================================
 
@@ -186,45 +191,63 @@ class QueryService:
                 key
             )
 
-            source = {
-                "document_id":
-                    document_id,
-
-                "title":
-                    title,
-
-                "chunk_no":
-                    chunk_no,
-
-                "page_reference":
-                    page_reference
-            }
-
-            # ----------------------------------------------
-            # 空の値は除外
-            # ----------------------------------------------
-
-            source = {
-                key: value
-                for key, value in source.items()
-                if value not in (
-                    None,
-                    ""
-                )
-            }
-
             sources.append(
-                source
+                {
+                    "document_id":
+                        document_id,
+
+                    "chunk_no":
+                        chunk_no,
+
+                    "title":
+                        title,
+
+                    "page_reference":
+                        page_reference
+                }
             )
 
         return sources
 
     # ======================================================
-    # Processing Metadata
+    # Source Pages
     # ======================================================
     #
-    # 検索時間など、回答本文とは関係ない情報。
+    # PromptBuilderへ渡すページ情報。
     #
+    # ページ番号はRAG metadata以外から生成しない。
+    #
+    # ======================================================
+
+    def _build_source_pages(
+        self,
+        items: list
+    ) -> list[str]:
+
+        pages: list[str] = []
+
+        for item in items:
+
+            page_reference = (
+                item.page_reference
+            )
+
+            if not page_reference:
+
+                continue
+
+            if page_reference in pages:
+
+                continue
+
+            pages.append(
+                page_reference
+            )
+
+        return pages
+
+    # ======================================================
+    # Processing Metadata
     # ======================================================
 
     def _build_response_metadata(
@@ -232,45 +255,41 @@ class QueryService:
         *,
         analyze_elapsed_ms: int,
         retrieval_elapsed_ms: int,
-        gate_elapsed_ms: int,
+        answerability_elapsed_ms: int,
         llm_elapsed_ms: int,
         total_elapsed_ms: int,
         fallback_used: bool,
         cache_hit: bool,
         retrieved_count: int,
-        reranked_count: int,
         gate_candidate_count: int,
         final_context_count: int
     ) -> dict:
 
         return {
 
-            "query_analysis_time_ms":
+            "query_analysis_elapsed_ms":
                 analyze_elapsed_ms,
 
-            "retrieval_time_ms":
+            "retrieval_elapsed_ms":
                 retrieval_elapsed_ms,
 
-            "answerability_gate_time_ms":
-                gate_elapsed_ms,
+            "answerability_elapsed_ms":
+                answerability_elapsed_ms,
 
-            "llm_time_ms":
+            "llm_elapsed_ms":
                 llm_elapsed_ms,
 
-            "total_time_ms":
+            "total_elapsed_ms":
                 total_elapsed_ms,
-
-            "fallback_used":
-                fallback_used,
 
             "cache_hit":
                 cache_hit,
 
+            "fallback_used":
+                fallback_used,
+
             "retrieved_count":
                 retrieved_count,
-
-            "reranked_count":
-                reranked_count,
 
             "gate_candidate_count":
                 gate_candidate_count,
@@ -281,25 +300,31 @@ class QueryService:
         }
 
     # ======================================================
-    # Empty / Rejected Response
+    # Empty Response
     # ======================================================
 
     def _build_empty_response(
         self,
         *,
         answer: str,
-        total_elapsed_ms: int,
         metadata: dict,
         is_off_topic: bool,
-        response_format: str
+        response_format: str,
+        answerability_result: AnswerabilityResult | None = None
     ) -> dict:
 
-        return {
+        result = {
 
             "answer":
                 answer,
 
             "sources":
+                [],
+
+            "source_pages":
+                [],
+
+            "documents":
                 [],
 
             "metadata":
@@ -312,6 +337,22 @@ class QueryService:
                 response_format
 
         }
+
+        if answerability_result is not None:
+
+            result[
+                "answerability_status"
+            ] = (
+                answerability_result.status.value
+            )
+
+            result[
+                "answerability_reason"
+            ] = (
+                answerability_result.reason
+            )
+
+        return result
 
     # ======================================================
     # Main Query
@@ -329,13 +370,14 @@ class QueryService:
             time.perf_counter()
         )
 
-        logger.info("")
         logger.info(
             "========================================"
         )
+
         logger.info(
             "RAG Query Start"
         )
+
         logger.info(
             "========================================"
         )
@@ -379,42 +421,27 @@ class QueryService:
                 ) * 1000
             )
 
-            answer = (
-                "質問内容を確認できませんでした。"
-            )
-
             metadata = (
                 self._build_response_metadata(
                     analyze_elapsed_ms=0,
                     retrieval_elapsed_ms=0,
-                    gate_elapsed_ms=0,
+                    answerability_elapsed_ms=0,
                     llm_elapsed_ms=0,
                     total_elapsed_ms=total_elapsed,
                     fallback_used=False,
                     cache_hit=False,
                     retrieved_count=0,
-                    reranked_count=0,
                     gate_candidate_count=0,
                     final_context_count=0
                 )
             )
 
-            search_log_service.log(
-                question=question,
-                normalized_question=normalized_question,
-                retrieved_items=[],
-                reranked_items=[],
-                answer=answer,
-                retrieval_elapsed_ms=0,
-                rerank_elapsed_ms=0,
-                llm_elapsed_ms=0,
-                total_elapsed_ms=total_elapsed,
-                cache_hit=False
+            answer = (
+                "質問内容を確認できませんでした。"
             )
 
             return self._build_empty_response(
                 answer=answer,
-                total_elapsed_ms=total_elapsed,
                 metadata=metadata,
                 is_off_topic=False,
                 response_format="EXPLAIN"
@@ -469,16 +496,6 @@ class QueryService:
             conversation_service.get_recent_questions(
                 session_id
             )
-        )
-
-        logger.info(
-            "Conversation Turns Loaded : %d",
-            len(conversation_turns)
-        )
-
-        logger.info(
-            "Conversation Questions Loaded : %d",
-            len(conversation_questions)
         )
 
         # ==================================================
@@ -548,12 +565,12 @@ class QueryService:
             gate_candidates
         ):
 
+            fallback_used = True
+
             logger.info(
                 "Retrieval Fallback : "
                 "knowledge_query search was weak."
             )
-
-            fallback_used = True
 
             (
                 retrieval_result,
@@ -574,23 +591,8 @@ class QueryService:
         )
 
         logger.info(
-            "Retrieval + Rerank Time : %d ms",
+            "Retrieval Time : %d ms",
             retrieval_elapsed
-        )
-
-        logger.info(
-            "Fallback Used : %s",
-            fallback_used
-        )
-
-        logger.info(
-            "Retrieved : %d",
-            retrieval_result.total
-        )
-
-        logger.info(
-            "Reranked : %d",
-            len(reranked_items)
         )
 
         # ==================================================
@@ -606,15 +608,11 @@ class QueryService:
                 ) * 1000
             )
 
-            answer = (
-                "資料から回答できませんでした。"
-            )
-
             metadata = (
                 self._build_response_metadata(
                     analyze_elapsed_ms=analyze_elapsed,
                     retrieval_elapsed_ms=retrieval_elapsed,
-                    gate_elapsed_ms=0,
+                    answerability_elapsed_ms=0,
                     llm_elapsed_ms=0,
                     total_elapsed_ms=total_elapsed,
                     fallback_used=fallback_used,
@@ -624,53 +622,17 @@ class QueryService:
                     retrieved_count=(
                         retrieval_result.total
                     ),
-                    reranked_count=len(
-                        reranked_items
-                    ),
                     gate_candidate_count=0,
                     final_context_count=0
                 )
             )
 
-            search_log_service.log(
-                question=question,
-                normalized_question=normalized_question,
-                retrieved_items=(
-                    retrieval_result.items
-                ),
-                reranked_items=[],
-                answer=answer,
-                retrieval_elapsed_ms=(
-                    retrieval_elapsed
-                ),
-                rerank_elapsed_ms=0,
-                llm_elapsed_ms=0,
-                total_elapsed_ms=(
-                    total_elapsed
-                ),
-                cache_hit=(
-                    retrieval_result.cache_hit
-                )
-            )
-
-            conversation_service.append(
-                session_id=session_id,
-                student_id=student_id,
-                role="user",
-                content=question
-            )
-
-            conversation_service.append(
-                session_id=session_id,
-                student_id=student_id,
-                role="assistant",
-                content=answer,
-                is_off_topic=is_off_topic
+            answer = (
+                "資料から回答できませんでした。"
             )
 
             return self._build_empty_response(
                 answer=answer,
-                total_elapsed_ms=total_elapsed,
                 metadata=metadata,
                 is_off_topic=is_off_topic,
                 response_format=response_format
@@ -680,30 +642,7 @@ class QueryService:
         # Answerability Gate
         # ==================================================
         #
-        # ここでは「資料が質問に完全回答できるか」ではなく、
-        # 「回答を構成するために意味のある関連資料か」を
-        # 最終確認する。
-        #
-        # 例えば、
-        #
-        #   Q:
-        #   よく使用するもの上位3つに
-        #   サンプルコードを出してください。
-        #
-        #   RAG:
-        #   boolean / byte / short / int / ...
-        #
-        # の場合、
-        #
-        # 「上位3つ」という順位は資料から確認できない。
-        #
-        # しかし基本データ型という関連情報は存在するため、
-        # LLMへ渡して、
-        #
-        # 「順位は資料から確認できないが、
-        #  資料にある基本データ型についてコード例を示す」
-        #
-        # という回答を可能にする。
+        # boolではなく、FULL/PARTIAL/NONEの結果を保持する。
         #
         # ==================================================
 
@@ -717,14 +656,14 @@ class QueryService:
             time.perf_counter()
         )
 
-        is_answerable = (
-            answerability_gate_service.is_answerable(
-                gate_query,
-                gate_candidates
+        answerability_result = (
+            answerability_gate_service.assess(
+                question=gate_query,
+                items=gate_candidates
             )
         )
 
-        gate_elapsed = int(
+        answerability_elapsed = int(
             (
                 time.perf_counter()
                 - gate_start
@@ -732,34 +671,71 @@ class QueryService:
         )
 
         logger.info(
-            "Answerability Gate Time : %d ms",
-            gate_elapsed
+            "Answerability Status : %s",
+            answerability_result.status.value
         )
 
         logger.info(
-            "Answerability Gate Result : %s",
-            is_answerable
+            "Answerability Reason : %s",
+            answerability_result.reason
         )
 
         # ==================================================
-        # Gate rejection
+        # NONE
         # ==================================================
         #
-        # GateがNoでも、RAG検索結果そのものが存在する場合は
-        # 直ちに回答を終了しない。
-        #
-        # 「資料には関連情報があるが、質問への直接回答は
-        # できない」という状態をLLMに判断させる。
+        # 本当にRAGに関連情報がない場合だけ、
+        # 資料を根拠とした回答を終了する。
         #
         # ==================================================
 
-        if not is_answerable:
+        if (
+            answerability_result.status
+            == AnswerabilityStatus.NONE
+        ):
 
-            logger.info(
-                "Answerability Gate rejected "
-                "direct-answer judgement, "
-                "but retrieved context exists. "
-                "Continuing with contextual answer generation."
+            total_elapsed = int(
+                (
+                    time.perf_counter()
+                    - overall_start
+                ) * 1000
+            )
+
+            metadata = (
+                self._build_response_metadata(
+                    analyze_elapsed_ms=analyze_elapsed,
+                    retrieval_elapsed_ms=retrieval_elapsed,
+                    answerability_elapsed_ms=(
+                        answerability_elapsed
+                    ),
+                    llm_elapsed_ms=0,
+                    total_elapsed_ms=total_elapsed,
+                    fallback_used=fallback_used,
+                    cache_hit=(
+                        retrieval_result.cache_hit
+                    ),
+                    retrieved_count=(
+                        retrieval_result.total
+                    ),
+                    gate_candidate_count=len(
+                        gate_candidates
+                    ),
+                    final_context_count=0
+                )
+            )
+
+            answer = (
+                "資料からは確認できません。"
+            )
+
+            return self._build_empty_response(
+                answer=answer,
+                metadata=metadata,
+                is_off_topic=is_off_topic,
+                response_format=response_format,
+                answerability_result=(
+                    answerability_result
+                )
             )
 
         # ==================================================
@@ -772,18 +748,8 @@ class QueryService:
             )
         )
 
-        logger.info(
-            "Gate Candidates Count : %d",
-            len(gate_candidates)
-        )
-
-        logger.info(
-            "Final Context Count : %d",
-            len(final_context_items)
-        )
-
         # ==================================================
-        # Defensive fallback
+        # Defensive Check
         # ==================================================
 
         if not final_context_items:
@@ -795,15 +761,13 @@ class QueryService:
                 ) * 1000
             )
 
-            answer = (
-                "資料からは確認できません。"
-            )
-
             metadata = (
                 self._build_response_metadata(
                     analyze_elapsed_ms=analyze_elapsed,
                     retrieval_elapsed_ms=retrieval_elapsed,
-                    gate_elapsed_ms=gate_elapsed,
+                    answerability_elapsed_ms=(
+                        answerability_elapsed
+                    ),
                     llm_elapsed_ms=0,
                     total_elapsed_ms=total_elapsed,
                     fallback_used=fallback_used,
@@ -813,9 +777,6 @@ class QueryService:
                     retrieved_count=(
                         retrieval_result.total
                     ),
-                    reranked_count=len(
-                        reranked_items
-                    ),
                     gate_candidate_count=len(
                         gate_candidates
                     ),
@@ -823,35 +784,18 @@ class QueryService:
                 )
             )
 
-            search_log_service.log(
-                question=question,
-                normalized_question=normalized_question,
-                retrieved_items=(
-                    retrieval_result.items
-                ),
-                reranked_items=(
-                    gate_candidates
-                ),
-                answer=answer,
-                retrieval_elapsed_ms=(
-                    retrieval_elapsed
-                ),
-                rerank_elapsed_ms=0,
-                llm_elapsed_ms=0,
-                total_elapsed_ms=(
-                    total_elapsed
-                ),
-                cache_hit=(
-                    retrieval_result.cache_hit
-                )
+            answer = (
+                "資料からは確認できません。"
             )
 
             return self._build_empty_response(
                 answer=answer,
-                total_elapsed_ms=total_elapsed,
                 metadata=metadata,
                 is_off_topic=is_off_topic,
-                response_format=response_format
+                response_format=response_format,
+                answerability_result=(
+                    answerability_result
+                )
             )
 
         # ==================================================
@@ -859,18 +803,15 @@ class QueryService:
         # ==================================================
 
         contexts = [
+
             item.document
+
             for item in final_context_items
+
         ]
 
         # ==================================================
-        # Source Information
-        # ==================================================
-        #
-        # 回答生成前にsourcesを確定する。
-        #
-        # LLM回答本文にはページ情報を強制的に混ぜない。
-        #
+        # Sources
         # ==================================================
 
         sources = (
@@ -879,56 +820,66 @@ class QueryService:
             )
         )
 
-        logger.info(
-            "Source Count : %d",
-            len(sources)
+        # ==================================================
+        # Source Pages
+        # ==================================================
+
+        source_pages = (
+            self._build_source_pages(
+                final_context_items
+            )
         )
 
-        for index, source in enumerate(
-            sources,
-            start=1
-        ):
-
-            logger.info(
-                "[Source %d] document_id=%s "
-                "title=%s page=%s",
-                index,
-                source.get(
-                    "document_id",
-                    ""
-                ),
-                source.get(
-                    "title",
-                    ""
-                ),
-                source.get(
-                    "page_reference",
-                    "(none)"
-                )
-            )
+        logger.info(
+            "Source Pages : %s",
+            source_pages
+        )
 
         # ==================================================
         # Prompt
         # ==================================================
+        #
+        # Answerability Gateの結果をそのまま渡す。
+        #
+        # これにより、
+        #
+        # FULL
+        # PARTIAL
+        # NONE
+        #
+        # の判定がLLM回答へ反映される。
+        #
+        # ページ情報もRAG metadataから渡す。
+        #
+        # ==================================================
 
         prompt = (
             prompt_builder.build(
-                question,
-                contexts,
+
+                question=question,
+
+                contexts=contexts,
+
                 conversation_questions=(
                     conversation_questions
                 ),
+
                 is_off_topic=is_off_topic,
-                response_format=response_format
+
+                response_format=response_format,
+
+                answerability_status=(
+                    answerability_result.status.value
+                ),
+
+                answerability_reason=(
+                    answerability_result.reason
+                ),
+
+                source_pages=source_pages
+
             )
         )
-
-        if settings.log_prompt:
-
-            logger.debug(
-                "Prompt\n%s",
-                prompt
-            )
 
         # ==================================================
         # LLM
@@ -959,100 +910,53 @@ class QueryService:
         )
 
         # ==================================================
-        # Logs
+        # Response Metadata
         # ==================================================
 
-        logger.info(
-            "----------------------------------------"
-        )
+        metadata = (
+            self._build_response_metadata(
 
-        logger.info(
-            "RAG Query Result"
-        )
+                analyze_elapsed_ms=(
+                    analyze_elapsed
+                ),
 
-        logger.info(
-            "----------------------------------------"
-        )
+                retrieval_elapsed_ms=(
+                    retrieval_elapsed
+                ),
 
-        logger.info(
-            "Answer Preview : %s",
-            answer[:300]
-        )
+                answerability_elapsed_ms=(
+                    answerability_elapsed
+                ),
 
-        logger.info(
-            "Collection : %s",
-            collection_name
-        )
+                llm_elapsed_ms=(
+                    llm_elapsed
+                ),
 
-        logger.info(
-            "Current Chapter : %s",
-            current_chapter or "(none)"
-        )
+                total_elapsed_ms=(
+                    total_elapsed
+                ),
 
-        logger.info(
-            "Is Off Topic : %s",
-            is_off_topic
-        )
+                fallback_used=(
+                    fallback_used
+                ),
 
-        logger.info(
-            "Knowledge Query : %s",
-            knowledge_query
-        )
+                cache_hit=(
+                    retrieval_result.cache_hit
+                ),
 
-        logger.info(
-            "Response Format : %s",
-            response_format
-        )
+                retrieved_count=(
+                    retrieval_result.total
+                ),
 
-        logger.info(
-            "Fallback Used : %s",
-            fallback_used
-        )
+                gate_candidate_count=(
+                    len(gate_candidates)
+                ),
 
-        logger.info(
-            "Retrieved Count : %d",
-            retrieval_result.total
-        )
+                final_context_count=(
+                    len(final_context_items)
+                )
 
-        logger.info(
-            "Reranked Count : %d",
-            len(reranked_items)
-        )
-
-        logger.info(
-            "Gate Candidates Count : %d",
-            len(gate_candidates)
-        )
-
-        logger.info(
-            "Final Context Count : %d",
-            len(final_context_items)
-        )
-
-        logger.info(
-            "Answerability Gate : %s (%d ms)",
-            is_answerable,
-            gate_elapsed
-        )
-
-        logger.info(
-            "Query Analysis Time : %d ms",
-            analyze_elapsed
-        )
-
-        logger.info(
-            "Retrieval Time : %d ms",
-            retrieval_elapsed
-        )
-
-        logger.info(
-            "LLM Time : %d ms",
-            llm_elapsed
-        )
-
-        logger.info(
-            "Total Time : %d ms",
-            total_elapsed
+            )
         )
 
         # ==================================================
@@ -1060,28 +964,41 @@ class QueryService:
         # ==================================================
 
         search_log_service.log(
+
             question=question,
-            normalized_question=normalized_question,
+
+            normalized_question=(
+                normalized_question
+            ),
+
             retrieved_items=(
                 retrieval_result.items
             ),
+
             reranked_items=(
                 gate_candidates
             ),
+
             answer=answer,
+
             retrieval_elapsed_ms=(
                 retrieval_elapsed
             ),
+
             rerank_elapsed_ms=0,
+
             llm_elapsed_ms=(
                 llm_elapsed
             ),
+
             total_elapsed_ms=(
                 total_elapsed
             ),
+
             cache_hit=(
                 retrieval_result.cache_hit
             )
+
         )
 
         # ==================================================
@@ -1089,75 +1006,33 @@ class QueryService:
         # ==================================================
 
         conversation_service.append(
+
             session_id=session_id,
+
             student_id=student_id,
+
             role="user",
+
             content=question
+
         )
 
         conversation_service.append(
+
             session_id=session_id,
+
             student_id=student_id,
+
             role="assistant",
+
             content=answer,
+
             is_off_topic=is_off_topic
-        )
 
-        # ==================================================
-        # Response Metadata
-        # ==================================================
-
-        response_metadata = (
-            self._build_response_metadata(
-                analyze_elapsed_ms=(
-                    analyze_elapsed
-                ),
-                retrieval_elapsed_ms=(
-                    retrieval_elapsed
-                ),
-                gate_elapsed_ms=(
-                    gate_elapsed
-                ),
-                llm_elapsed_ms=(
-                    llm_elapsed
-                ),
-                total_elapsed_ms=(
-                    total_elapsed
-                ),
-                fallback_used=(
-                    fallback_used
-                ),
-                cache_hit=(
-                    retrieval_result.cache_hit
-                ),
-                retrieved_count=(
-                    retrieval_result.total
-                ),
-                reranked_count=(
-                    len(reranked_items)
-                ),
-                gate_candidate_count=(
-                    len(gate_candidates)
-                ),
-                final_context_count=(
-                    len(final_context_items)
-                )
-            )
         )
 
         # ==================================================
         # Final Response
-        # ==================================================
-        #
-        # answer
-        #   → 回答本文
-        #
-        # sources
-        #   → 根拠・参考資料・ページ
-        #
-        # metadata
-        #   → 処理時間・検索件数等
-        #
         # ==================================================
 
         return {
@@ -1168,8 +1043,20 @@ class QueryService:
             "sources":
                 sources,
 
+            "source_pages":
+                source_pages,
+
+            "documents":
+                final_context_items,
+
+            "answerability_status":
+                answerability_result.status.value,
+
+            "answerability_reason":
+                answerability_result.reason,
+
             "metadata":
-                response_metadata,
+                metadata,
 
             "is_off_topic":
                 is_off_topic,

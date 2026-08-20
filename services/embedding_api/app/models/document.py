@@ -1,7 +1,13 @@
+from typing import Any
+
 from pydantic import BaseModel
 
 
 class DocumentChunk(BaseModel):
+
+    # ======================================================
+    # Chunk identification
+    # ======================================================
 
     chunk_id: str
 
@@ -9,102 +15,175 @@ class DocumentChunk(BaseModel):
 
     chunk_no: int
 
+    # ======================================================
+    # Chunk text
+    # ======================================================
+
     text: str
 
-    metadata: dict
-
-    @property
-    def title(self):
-
-        return self.metadata.get(
-
-            "title",
-
-            ""
-
-        )
-
-    @property
-    def category(self):
-
-        return self.metadata.get(
-
-            "category",
-
-            ""
-
-        )
-
-    @property
-    def keywords(self):
-
-        return self.metadata.get(
-
-            "keywords",
-
-            ""
-
-        )
-
+    # ======================================================
+    # Metadata
+    # ======================================================
     #
+    # ChromaDBへ登録するmetadata。
+    #
+    # ページ情報を含め、検索結果として必要な情報は
+    # metadataを正とする。
+    #
+    # ======================================================
+
+    metadata: dict[str, Any]
+
+    # ======================================================
+    # Basic metadata
+    # ======================================================
+
+    @property
+    def title(self) -> str:
+
+        return str(
+            self.metadata.get(
+                "title",
+                ""
+            )
+        )
+
+    @property
+    def category(self) -> str:
+
+        return str(
+            self.metadata.get(
+                "category",
+                ""
+            )
+        )
+
+    @property
+    def keywords(self) -> str:
+
+        return str(
+            self.metadata.get(
+                "keywords",
+                ""
+            )
+        )
+
+    # ======================================================
     # Phase15 : Java教材PDF RAG化
+    # ======================================================
     #
     # chapter / section は登録時にAPI経由で
-    # 人が自由記述文字列として指定する。
+    # 指定される自由記述文字列。
     #
+    # ======================================================
 
     @property
-    def chapter(self):
+    def chapter(self) -> str:
 
-        return self.metadata.get(
-
-            "chapter",
-
-            ""
-
+        return str(
+            self.metadata.get(
+                "chapter",
+                ""
+            )
         )
 
     @property
-    def section(self):
+    def section(self) -> str:
 
-        return self.metadata.get(
-
-            "section",
-
-            ""
-
+        return str(
+            self.metadata.get(
+                "section",
+                ""
+            )
         )
 
+    # ======================================================
+    # Page Reference
+    # ======================================================
     #
-    # content_type は chunk_service 側で
-    # コードブロック検出ロジックにより自動判定される。
+    # 原資料上のページ情報。
     #
-    # "code" | "text"
+    # 正式なmetadataキー：
     #
+    #     page_reference
+    #
+    # 例：
+    #
+    #     p.10
+    #     p.12
+    #     p.10-11
+    #
+    # ======================================================
 
     @property
-    def content_type(self):
+    def page_reference(self) -> str | None:
 
-        return self.metadata.get(
-
-            "content_type",
-
-            "text"
-
+        value = (
+            self.metadata.get(
+                "page_reference"
+            )
         )
 
+        if value is None:
+
+            return None
+
+        value = str(
+            value
+        ).strip()
+
+        if not value:
+
+            return None
+
+        return value
+
+    # ======================================================
+    # Page Reference existence
+    # ======================================================
+
+    def has_page_reference(self) -> bool:
+
+        return (
+            self.page_reference
+            is not None
+        )
+
+    # ======================================================
+    # Content Type
+    # ======================================================
     #
-    # language は content_type="code" の場合のみ
-    # 意味を持つ。未指定時は空文字列。
+    # chunk_service側で自動判定される。
     #
+    #     code
+    #     text
+    #
+    # ======================================================
 
     @property
-    def language(self):
+    def content_type(self) -> str:
 
-        return self.metadata.get(
+        return str(
+            self.metadata.get(
+                "content_type",
+                "text"
+            )
+        )
 
-            "language",
+    # ======================================================
+    # Language
+    # ======================================================
+    #
+    # content_type="code" の場合に主に使用する。
+    #
+    # ======================================================
 
-            ""
+    @property
+    def language(self) -> str:
 
+        return str(
+            self.metadata.get(
+                "language",
+                ""
+            )
         )

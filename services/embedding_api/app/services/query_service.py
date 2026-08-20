@@ -9,6 +9,9 @@ from app.services.answerability_gate_service import (
 from app.services.collection_router_service import (
     collection_router_service
 )
+from app.services.context_dedup_service import (
+    context_dedup_service
+)
 from app.services.conversation_service import conversation_service
 from app.services.llm_service import llm_service
 from app.services.multi_query_retrieval_service import (
@@ -23,6 +26,7 @@ from app.services.query_normalizer import query_normalizer
 from app.services.query_rewrite_service import query_rewrite_service
 from app.services.reranker_service import reranker_service
 from app.services.search_log_service import search_log_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +44,8 @@ class QueryService:
     #
 
     def _is_weak(
-
         self,
-
         gate_candidates: list
-
     ) -> bool:
 
         return len(gate_candidates) == 0
@@ -56,17 +57,11 @@ class QueryService:
     #
 
     def _search_and_rerank(
-
         self,
-
         search_query: str,
-
         collection_name: str,
-
         current_chapter: str,
-
         limit: int
-
     ):
 
         retrieval_result = multi_query_retrieval_service.search(
@@ -101,14 +96,15 @@ class QueryService:
         #
 
         gate_candidates = reranker_service.rerank_relaxed(
-
             scored_items=retrieval_result.items,
-
             limit=answerability_gate_service.TOP_N
-
         )
 
-        return retrieval_result, reranked_items, gate_candidates
+        return (
+            retrieval_result,
+            reranked_items,
+            gate_candidates
+        )
 
     def ask(
         self,
@@ -156,74 +152,109 @@ class QueryService:
                 "Normalized question is empty."
             )
 
-            logger.info("========================================")
-            logger.info("RAG Query End")
-            logger.info("========================================")
+            logger.info(
+                "========================================"
+            )
+            logger.info(
+                "RAG Query End"
+            )
+            logger.info(
+                "========================================"
+            )
+
+            answer = "質問内容を確認できませんでした。"
 
             search_log_service.log(
-
                 question=question,
-
                 normalized_question=normalized_question,
-
                 retrieved_items=[],
-
                 reranked_items=[],
-
-                answer="質問内容を確認できませんでした。",
-
+                answer=answer,
                 retrieval_elapsed_ms=0,
-
                 rerank_elapsed_ms=0,
-
                 llm_elapsed_ms=0,
-
                 total_elapsed_ms=total_elapsed,
-
                 cache_hit=False
-
             )
 
             return {
-                "answer": "質問内容を確認できませんでした。",
+                "answer": answer,
                 "elapsed_ms": total_elapsed,
                 "retrieved_count": 0,
                 "documents": []
             }
 
         collection_name = collection_router_service.route(
-
             normalized_question
-
         )
 
         logger.info(
-
             "Collection Router : %s",
-
             collection_name
-
         )
 
         current_chapter = progress_service.get_current_chapter(
-
             student_id
-
         )
 
         is_off_topic = off_topic_router_service.is_off_topic(
-
             normalized_question
-
-        )
-
-        conversation_turns = conversation_service.get_recent_turns(
-
-            session_id
-
         )
 
         #
+        # ------------------------------------------------------
+        # 会話履歴
+        # ------------------------------------------------------
+        #
+        # Query Rewriteでは、assistant回答を含む従来の会話履歴を
+        # 使用する。
+        #
+        # 例えば、
+        #
+        #   Q: 継承とは何ですか？
+        #   A: 継承とは...
+        #   Q: それをフローチャートで表してください。
+        #
+        # のような会話では、Query Rewriteが「それ」が
+        # 「継承」を指していることを判断するために、
+        # 過去のassistant回答も含めた文脈が有効。
+        #
+
+        conversation_turns = conversation_service.get_recent_turns(
+            session_id
+        )
+
+        #
+        # 最終回答生成用には、assistant回答を除外する。
+        #
+        # ここが今回の修正の重要ポイント。
+        #
+        # 過去のassistant回答本文をLLMへ再投入すると、
+        # 小型LLMがその回答を「今回の回答候補」として
+        # そのまま模倣する可能性がある。
+        #
+        # そのため、最終Promptには受講生の質問だけを
+        # 会話文脈として渡す。
+        #
+
+        conversation_questions = (
+            conversation_service.get_recent_questions(
+                session_id
+            )
+        )
+
+        logger.info(
+            "Conversation Turns Loaded : %d",
+            len(conversation_turns)
+        )
+
+        logger.info(
+            "Conversation Questions Loaded : %d",
+            len(conversation_questions)
+        )
+
+        #
+        # ------------------------------------------------------
         # Knowledge Query分離 + 回答形式判定
         # ------------------------------------------------------
         #
@@ -237,12 +268,11 @@ class QueryService:
 
         analyze_start = time.perf_counter()
 
-        knowledge_query, response_format = query_rewrite_service.analyze(
-
-            normalized_question,
-
-            conversation_turns
-
+        knowledge_query, response_format = (
+            query_rewrite_service.analyze(
+                normalized_question,
+                conversation_turns
+            )
         )
 
         analyze_elapsed = int(
@@ -267,6 +297,7 @@ class QueryService:
         )
 
         #
+        # ------------------------------------------------------
         # Retrieval Fallback（二段階検索）
         # ------------------------------------------------------
         #
@@ -276,69 +307,47 @@ class QueryService:
         # 1段階目が弱い（Reranker通過0件）場合、
         #
         # 2段階目 : 正規化後の元の質問（normalized_question）で
-        #           再検索する。knowledge_queryの抽出が
-        #           不適切だった場合の保険として機能する。
+        #           再検索する。
         #
-        # 2段階目も弱い場合、資料外として回答を拒否する。
+        # knowledge_queryの抽出が不適切だった場合の保険として
+        # 機能する。
         #
 
         retrieval_start = time.perf_counter()
 
         (
-
             retrieval_result,
-
             reranked_items,
-
             gate_candidates
-
         ) = self._search_and_rerank(
-
             search_query=knowledge_query,
-
             collection_name=collection_name,
-
             current_chapter=current_chapter,
-
             limit=limit
-
         )
 
         fallback_used = False
 
         if self._is_weak(
-
             gate_candidates
-
         ):
 
             logger.info(
-
                 "Retrieval Fallback : knowledge_query search was "
                 "weak. Retrying with normalized_question."
-
             )
 
             fallback_used = True
 
             (
-
                 retrieval_result,
-
                 reranked_items,
-
                 gate_candidates
-
             ) = self._search_and_rerank(
-
                 search_query=normalized_question,
-
                 collection_name=collection_name,
-
                 current_chapter=current_chapter,
-
                 limit=limit
-
             )
 
         retrieval_elapsed = int(
@@ -368,13 +377,12 @@ class QueryService:
         )
 
         #
-        # 二段階検索を経ても弱い場合は資料外として拒否する。
-        #
+        # ------------------------------------------------------
+        # 二段階検索を経ても弱い場合
+        # ------------------------------------------------------
 
         if self._is_weak(
-
             gate_candidates
-
         ):
 
             total_elapsed = int(
@@ -401,53 +409,31 @@ class QueryService:
             answer = "資料から回答できませんでした。"
 
             search_log_service.log(
-
                 question=question,
-
                 normalized_question=normalized_question,
-
                 retrieved_items=retrieval_result.items,
-
                 reranked_items=[],
-
                 answer=answer,
-
                 retrieval_elapsed_ms=retrieval_elapsed,
-
                 rerank_elapsed_ms=0,
-
                 llm_elapsed_ms=0,
-
                 total_elapsed_ms=total_elapsed,
-
                 cache_hit=retrieval_result.cache_hit
-
             )
 
             conversation_service.append(
-
                 session_id=session_id,
-
                 student_id=student_id,
-
                 role="user",
-
                 content=question
-
             )
 
             conversation_service.append(
-
                 session_id=session_id,
-
                 student_id=student_id,
-
                 role="assistant",
-
                 content=answer,
-
                 is_off_topic=is_off_topic
-
             )
 
             return {
@@ -456,8 +442,8 @@ class QueryService:
                 "retrieved_count": 0,
                 "documents": []
             }
-
         #
+        # ------------------------------------------------------
         # Answerability Gate
         # ------------------------------------------------------
         #
@@ -473,23 +459,16 @@ class QueryService:
         #
 
         gate_query = (
-
             normalized_question
-
             if fallback_used
-
             else knowledge_query
-
         )
 
         gate_start = time.perf_counter()
 
         is_answerable = answerability_gate_service.is_answerable(
-
             gate_query,
-
             gate_candidates
-
         )
 
         gate_elapsed = int(
@@ -533,53 +512,31 @@ class QueryService:
             answer = "資料からは確認できません。"
 
             search_log_service.log(
-
                 question=question,
-
                 normalized_question=normalized_question,
-
                 retrieved_items=retrieval_result.items,
-
                 reranked_items=gate_candidates,
-
                 answer=answer,
-
                 retrieval_elapsed_ms=retrieval_elapsed,
-
                 rerank_elapsed_ms=0,
-
                 llm_elapsed_ms=0,
-
                 total_elapsed_ms=total_elapsed,
-
                 cache_hit=retrieval_result.cache_hit
-
             )
 
             conversation_service.append(
-
                 session_id=session_id,
-
                 student_id=student_id,
-
                 role="user",
-
                 content=question
-
             )
 
             conversation_service.append(
-
                 session_id=session_id,
-
                 student_id=student_id,
-
                 role="assistant",
-
                 content=answer,
-
                 is_off_topic=is_off_topic
-
             )
 
             return {
@@ -590,102 +547,178 @@ class QueryService:
             }
 
         #
+        # ------------------------------------------------------
+        # Context重複除去
+        # ------------------------------------------------------
+        #
+        # Answerability Gateが「回答可能」と判定した候補を、
+        # LLMへ渡す直前に整理する。
+        #
+        # ここでは検索アルゴリズムそのものを変更しない。
+        #
+        # Gate Candidates
+        #       ↓
+        # Context Dedup
+        #       ↓
+        # Final Context
+        #
+        # 完全一致のContextだけを除去する。
+        # 類似度による除去は現段階では行わない。
+        #
+
+        final_context_items = (
+            context_dedup_service.deduplicate(
+                gate_candidates
+            )
+        )
+
+        logger.info(
+            "Gate Candidates Count : %d",
+            len(gate_candidates)
+        )
+
+        logger.info(
+            "Final Context Count : %d",
+            len(final_context_items)
+        )
+
+        #
+        # Contextが重複除去によって0件になった場合。
+        #
+        # 通常は発生しないが、防御的に処理する。
+        #
+
+        if not final_context_items:
+
+            total_elapsed = int(
+                (
+                    time.perf_counter() - overall_start
+                ) * 1000
+            )
+
+            logger.warning(
+                "No usable context remained after deduplication."
+            )
+
+            answer = "資料からは確認できません。"
+
+            search_log_service.log(
+                question=question,
+                normalized_question=normalized_question,
+                retrieved_items=retrieval_result.items,
+                reranked_items=gate_candidates,
+                answer=answer,
+                retrieval_elapsed_ms=retrieval_elapsed,
+                rerank_elapsed_ms=0,
+                llm_elapsed_ms=0,
+                total_elapsed_ms=total_elapsed,
+                cache_hit=retrieval_result.cache_hit
+            )
+
+            conversation_service.append(
+                session_id=session_id,
+                student_id=student_id,
+                role="user",
+                content=question
+            )
+
+            conversation_service.append(
+                session_id=session_id,
+                student_id=student_id,
+                role="assistant",
+                content=answer,
+                is_off_topic=is_off_topic
+            )
+
+            return {
+                "answer": answer,
+                "elapsed_ms": total_elapsed,
+                "retrieved_count": 0,
+                "documents": []
+            }
+
+        #
+        # ------------------------------------------------------
         # Context生成
         # ------------------------------------------------------
         #
-        # Answerability GateがYesと判定した資料集合
-        # （gate_candidates）をそのままLLMのコンテキストとして
-        # 使用する。
+        # LLMへ実際に渡すのは、
         #
-        # reranked_items（min_rerank_score通過分）は
-        # CrossEncoderのスコアリング誤り（短い無意味な文字列に
-        # 高スコアを付ける等）で、本来関連度の高い資料を
-        # 取りこぼすことがあるため、Gateが実際に「答えられる」と
-        # 判定した資料を優先する。
+        #   final_context_items
+        #
+        # だけ。
+        #
+        # Gate CandidatesそのものをPromptへ渡さない。
         #
 
         contexts = [
-
             item.document
-
-            for item in gate_candidates
-
+            for item in final_context_items
         ]
 
         #
-        # デバッグ : 最終的にLLM（メイン回答生成）へ渡される
-        # contextsの内訳をログに残す。
+        # ------------------------------------------------------
+        # デバッグログ
+        # ------------------------------------------------------
+        #
+        # Gate通過後の候補数と、最終的にLLMへ渡すContext数を
+        # 明確に分離して記録する。
         #
 
         logger.info(
-
             "----------------------------------------"
-
         )
 
         logger.info(
-
-            "Final Contexts for LLM (post-Gate)"
-
+            "Final Contexts for LLM"
         )
 
         logger.info(
-
             "----------------------------------------"
-
         )
 
         for index, item in enumerate(
-
-            gate_candidates,
-
+            final_context_items,
             start=1
-
         ):
 
             metadata = item.metadata or {}
 
             logger.info(
-
                 "[Context %d] document_id=%s chunk_no=%s",
-
                 index,
-
                 metadata.get(
-
                     "document_id",
-
                     ""
-
                 ),
-
                 metadata.get(
-
                     "chunk_no",
-
                     ""
-
                 )
-
             )
 
         logger.info(
-
             "----------------------------------------"
-
         )
 
         #
+        # ------------------------------------------------------
         # Prompt生成
+        # ------------------------------------------------------
         #
-        # 最終回答生成には元の質問（question）を使う。
-        # response_formatに応じた出力指示を渡す。
+        # ここが今回の会話履歴対策の中心。
+        #
+        # Query Rewriteにはconversation_turnsを使うが、
+        # 最終回答生成にはconversation_questionsを使用する。
+        #
+        # したがって、過去のassistant回答本文は
+        # 最終Promptへ渡されない。
         #
 
         prompt = prompt_builder.build(
             question,
             contexts,
-            conversation_turns=conversation_turns,
+            conversation_questions=conversation_questions,
             is_off_topic=is_off_topic,
             response_format=response_format
         )
@@ -696,6 +729,11 @@ class QueryService:
                 "Prompt\n%s",
                 prompt
             )
+
+        #
+        # ------------------------------------------------------
+        # LLM
+        # ------------------------------------------------------
 
         llm_start = time.perf_counter()
 
@@ -715,9 +753,22 @@ class QueryService:
             ) * 1000
         )
 
-        logger.info("----------------------------------------")
-        logger.info("RAG Query Result")
-        logger.info("----------------------------------------")
+        #
+        # ------------------------------------------------------
+        # 結果ログ
+        # ------------------------------------------------------
+
+        logger.info(
+            "----------------------------------------"
+        )
+
+        logger.info(
+            "RAG Query Result"
+        )
+
+        logger.info(
+            "----------------------------------------"
+        )
 
         logger.info(
             "Answer Preview : %s",
@@ -760,6 +811,11 @@ class QueryService:
         )
 
         logger.info(
+            "Conversation Questions Loaded : %d",
+            len(conversation_questions)
+        )
+
+        logger.info(
             "Retrieved Count : %d",
             retrieval_result.total
         )
@@ -772,6 +828,11 @@ class QueryService:
         logger.info(
             "Gate Candidates Count : %d",
             len(gate_candidates)
+        )
+
+        logger.info(
+            "Final Context Count : %d",
+            len(final_context_items)
         )
 
         logger.info(
@@ -800,65 +861,80 @@ class QueryService:
             total_elapsed
         )
 
-        logger.info("========================================")
-        logger.info("RAG Query End")
-        logger.info("========================================")
-        logger.info("")
+        logger.info(
+            "========================================"
+        )
+
+        logger.info(
+            "RAG Query End"
+        )
+
+        logger.info(
+            "========================================"
+        )
+
+        logger.info(
+            ""
+        )
+
+        #
+        # ------------------------------------------------------
+        # 検索ログ保存
+        # ------------------------------------------------------
+        #
+        # search_logには、従来どおりGate Candidatesを保存する。
+        #
+        # 理由：
+        # 検索品質の分析では、Gateが何を候補として判定したかを
+        # 残しておいた方がよい。
+        #
+        # ContextDedupはLLM投入直前のPrompt最適化なので、
+        # 検索ログの意味を変更しない。
+        #
 
         search_log_service.log(
-
             question=question,
-
             normalized_question=normalized_question,
-
             retrieved_items=retrieval_result.items,
-
             reranked_items=gate_candidates,
-
             answer=answer,
-
             retrieval_elapsed_ms=retrieval_elapsed,
-
             rerank_elapsed_ms=0,
-
             llm_elapsed_ms=llm_elapsed,
-
             total_elapsed_ms=total_elapsed,
-
             cache_hit=retrieval_result.cache_hit
-
         )
 
+        #
+        # ------------------------------------------------------
+        # 会話履歴保存
+        # ------------------------------------------------------
+        #
+        # 保存する履歴は従来どおりuser / assistantの両方。
+        #
+        # 今回変更したのは「保存方法」ではなく、
+        # 「最終回答生成時にどの履歴を使うか」だけ。
+        #
+
         conversation_service.append(
-
             session_id=session_id,
-
             student_id=student_id,
-
             role="user",
-
             content=question
-
         )
 
         conversation_service.append(
-
             session_id=session_id,
-
             student_id=student_id,
-
             role="assistant",
-
             content=answer,
-
             is_off_topic=is_off_topic
-
         )
 
         return {
             "answer": answer,
-            "documents": gate_candidates,
-            "retrieved_count": len(gate_candidates),
+            "documents": final_context_items,
+            "retrieved_count": len(final_context_items),
             "elapsed_ms": total_elapsed,
             "is_off_topic": is_off_topic,
             "response_format": response_format

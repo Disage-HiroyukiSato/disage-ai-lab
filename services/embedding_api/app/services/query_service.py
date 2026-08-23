@@ -687,6 +687,8 @@ class QueryService:
         # 本当にRAGに関連情報がない場合だけ、
         # 資料を根拠とした回答を終了する。
         #
+        # FULL / PARTIALの場合はLLMへ進む。
+        #
         # ==================================================
 
         if (
@@ -739,12 +741,33 @@ class QueryService:
             )
 
         # ==================================================
-        # Context Dedup
+        # Answer Context
         # ==================================================
+        #
+        # Answerability Gate用候補と、
+        # 実際の回答生成用候補を統合する。
+        #
+        # reranked_items:
+        #     通常のRerankerによる回答関連度順の候補。
+        #
+        # gate_candidates:
+        #     Answerability Gateが関連情報を判定するための
+        #     緩和候補。
+        #
+        # 両者を統合したうえで重複除去することで、
+        # Gate用候補にしか存在しない関連情報も
+        # 回答生成に利用できる。
+        #
+        # ==================================================
+
+        answer_context_candidates = (
+            reranked_items
+            + gate_candidates
+        )
 
         final_context_items = (
             context_dedup_service.deduplicate(
-                gate_candidates
+                answer_context_candidates
             )
         )
 
@@ -785,7 +808,8 @@ class QueryService:
             )
 
             answer = (
-                "資料からは確認できません。"
+                "回答に利用できる資料を"
+                "整理できませんでした。"
             )
 
             return self._build_empty_response(
@@ -840,8 +864,6 @@ class QueryService:
         # ==================================================
         #
         # Answerability Gateの結果をそのまま渡す。
-        #
-        # これにより、
         #
         # FULL
         # PARTIAL
@@ -962,6 +984,11 @@ class QueryService:
         # ==================================================
         # Search Log
         # ==================================================
+        #
+        # reranked_itemsには、Gate候補ではなく、
+        # 実際のRerankerによる結果を記録する。
+        #
+        # ==================================================
 
         search_log_service.log(
 
@@ -976,7 +1003,7 @@ class QueryService:
             ),
 
             reranked_items=(
-                gate_candidates
+                reranked_items
             ),
 
             answer=answer,

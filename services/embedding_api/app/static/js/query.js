@@ -14,6 +14,8 @@
  * ・回答可能性表示
  * ・根拠資料表示
  * ・参照ページ表示
+ * ・要点表示
+ * ・関連教材表示
  * ・システム情報表示
  * ・Markdown / Mermaid表示
  *
@@ -29,6 +31,8 @@
 const SESSION_STORAGE_KEY = "disage_session_id";
 
 const HISTORY_STORAGE_KEY = "disage_history";
+
+const MAX_QUESTIONS_PER_THREAD = 30;
 
 /* ============================================================
  * Session
@@ -84,7 +88,7 @@ function saveLocalHistory(history) {
   localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
 }
 
-function appendLocalHistory(question, answer, answerabilityStatus) {
+function appendLocalHistory(question, answer, answerabilityStatus, response) {
   const history = getLocalHistory();
 
   history.push({
@@ -93,11 +97,25 @@ function appendLocalHistory(question, answer, answerabilityStatus) {
     answer: answer,
 
     answerability_status: answerabilityStatus,
+
+    answerability_reason: response.answerability_reason || "",
+
+    sources: response.sources || [],
+
+    source_pages: response.source_pages || [],
+
+    documents: response.documents || [],
+
+    metadata: response.metadata || {},
+
+    created_at: new Date().toISOString(),
   });
 
   saveLocalHistory(history);
 
-  renderHistory();
+  renderThreadList();
+
+  renderQuestionList();
 }
 
 /* ============================================================
@@ -111,55 +129,6 @@ function escapeHtml(text) {
   div.textContent = text == null ? "" : String(text);
 
   return div.innerHTML;
-}
-
-/* ============================================================
- * History UI
- * ============================================================
- */
-
-function renderHistory() {
-  const container = document.getElementById("history");
-
-  if (!container) {
-    return;
-  }
-
-  const history = getLocalHistory();
-
-  if (history.length === 0) {
-    container.innerHTML = `
-            <div class="empty-state">
-                <p>まだ会話がありません。</p>
-            </div>
-            `;
-
-    return;
-  }
-
-  container.innerHTML = history
-    .map(function (turn, index) {
-      const status = turn.answerability_status || "";
-
-      const statusLabel = getAnswerabilityLabel(status);
-
-      return `
-                        <button
-                            type="button"
-                            class="thread-item"
-                            data-history-index="${index}"
-                        >
-                            <span class="thread-item-title">
-                                ${escapeHtml(turn.question)}
-                            </span>
-
-                            <span class="thread-item-meta">
-                                ${escapeHtml(statusLabel)}
-                            </span>
-                        </button>
-                    `;
-    })
-    .join("");
 }
 
 /* ============================================================
@@ -202,13 +171,6 @@ function getAnswerabilityClass(status) {
 /* ============================================================
  * Markdown
  * ============================================================
- *
- * marked が読み込まれている場合はMarkdownをHTML化する。
- *
- * marked が存在しない場合は安全なテキスト表示へ
- * フォールバックする。
- *
- * ============================================================
  */
 
 function renderMarkdown(text) {
@@ -241,7 +203,7 @@ async function renderMermaid() {
 }
 
 /* ============================================================
- * Generic DOM Helpers
+ * DOM Helpers
  * ============================================================
  */
 
@@ -283,58 +245,68 @@ function renderAnswer(answer) {
 }
 
 /* ============================================================
- * Answerability
+ * Answer Status
  * ============================================================
  */
 
-function renderAnswerability(status, reason) {
-  const container = document.getElementById("answerability");
+function renderAnswerStatus(status) {
+  const element = document.getElementById("answerStatus");
 
-  if (!container) {
+  if (!element) {
     return;
   }
 
   const normalized = String(status || "").toUpperCase();
 
-  const label = getAnswerabilityLabel(normalized);
-
-  const className = getAnswerabilityClass(normalized);
-
   if (!normalized) {
-    container.innerHTML = "";
+    element.textContent = "待機中";
+
+    element.className = "answer-status";
 
     return;
   }
 
-  container.innerHTML = `
-        <section class="answer-section answerability-section">
+  element.textContent = getAnswerabilityLabel(normalized);
 
-            <div class="answer-section-header">
+  element.className = "answer-status " + getAnswerabilityClass(normalized);
+}
 
-                <h3>
-                    回答可能性
-                </h3>
+/* ============================================================
+ * Answerability
+ * ============================================================
+ */
 
-            </div>
+function renderAnswerability(status, reason) {
+  const section = document.getElementById("answerabilitySection");
 
-            <div
-                class="answerability-status ${className}"
-            >
-                ${escapeHtml(label)}
-            </div>
+  const statusElement = document.getElementById("answerabilityStatus");
 
-            ${
-              reason
-                ? `
-                        <p class="answerability-reason">
-                            ${escapeHtml(reason)}
-                        </p>
-                    `
-                : ""
-            }
+  const reasonElement = document.getElementById("answerabilityReason");
 
-        </section>
-        `;
+  if (!section) {
+    return;
+  }
+
+  const normalized = String(status || "").toUpperCase();
+
+  if (!normalized) {
+    section.hidden = true;
+
+    return;
+  }
+
+  section.hidden = false;
+
+  if (statusElement) {
+    statusElement.textContent = getAnswerabilityLabel(normalized);
+
+    statusElement.className =
+      "answerability-status " + getAnswerabilityClass(normalized);
+  }
+
+  if (reasonElement) {
+    reasonElement.textContent = reason || "";
+  }
 }
 
 /* ============================================================
@@ -346,8 +318,7 @@ function renderAnswerability(status, reason) {
  * 回答の根拠・参考資料。
  *
  * page_reference
- * はバックエンドがRAG metadataから取得した値のみを
- * 表示する。
+ * はバックエンドがRAG metadataから取得した値。
  *
  * フロント側ではページ番号を推測しない。
  *
@@ -364,26 +335,14 @@ function renderSources(sources) {
   container.innerHTML = "";
 
   if (!Array.isArray(sources) || sources.length === 0) {
-    return;
-  }
-
-  const section = document.createElement("section");
-
-  section.className = "answer-section";
-
-  section.innerHTML = `
-        <div class="answer-section-header">
-
-            <h3>
-                根拠・参考資料
-            </h3>
-
-        </div>
-
-        <div class="sources-list"></div>
+    container.innerHTML = `
+            <p class="empty-message">
+                根拠資料はありません。
+            </p>
         `;
 
-  const list = section.querySelector(".sources-list");
+    return;
+  }
 
   sources.forEach(function (source) {
     const item = document.createElement("div");
@@ -394,12 +353,15 @@ function renderSources(sources) {
 
     const documentId = source.document_id || "";
 
-    const chunkNo = source.chunk_no || "";
+    const chunkNo = source.chunk_no ?? "";
 
-    const pageReference = source.page_reference;
+    const pageReference = source.page_reference || "";
 
     item.innerHTML = `
-                <div class="source-item-header">
+
+                <div
+                    class="source-item-header"
+                >
 
                     <h4>
                         ${escapeHtml(title)}
@@ -422,7 +384,10 @@ function renderSources(sources) {
                 ${
                   documentId || chunkNo
                     ? `
-                            <p class="source-meta">
+                            <p
+                                class="source-meta"
+                            >
+
                                 ${
                                   documentId
                                     ? "Document: " + escapeHtml(documentId)
@@ -430,20 +395,20 @@ function renderSources(sources) {
                                 }
 
                                 ${
-                                  chunkNo
+                                  chunkNo !== ""
                                     ? " / Chunk: " + escapeHtml(chunkNo)
                                     : ""
                                 }
+
                             </p>
                         `
                     : ""
                 }
-                `;
 
-    list.appendChild(item);
+            `;
+
+    container.appendChild(item);
   });
-
-  container.appendChild(section);
 }
 
 /* ============================================================
@@ -452,288 +417,196 @@ function renderSources(sources) {
  */
 
 function renderSourcePages(sourcePages) {
-  const container = document.getElementById("source-pages");
+  const section = document.getElementById("sourcePagesSection");
 
-  if (!container) {
+  const container = document.getElementById("sourcePages");
+
+  if (!section || !container) {
     return;
   }
 
   container.innerHTML = "";
 
   if (!Array.isArray(sourcePages) || sourcePages.length === 0) {
+    container.innerHTML = `
+            <p class="empty-message">
+                参照ページはありません。
+            </p>
+        `;
+
     return;
   }
 
-  const section = document.createElement("section");
+  const uniquePages = Array.from(
+    new Set(
+      sourcePages
+        .filter((page) => page != null && String(page).trim() !== "")
+        .map((page) => String(page)),
+    ),
+  );
 
-  section.className = "answer-section";
+  uniquePages.forEach(function (page) {
+    const element = document.createElement("span");
 
-  section.innerHTML = `
-        <div class="answer-section-header">
+    element.className = "source-page";
 
-            <h3>
-                参照ページ
-            </h3>
+    element.textContent = page;
 
-        </div>
-
-        <div class="source-pages-list"></div>
-        `;
-
-  const list = section.querySelector(".source-pages-list");
-
-  sourcePages.forEach(function (page) {
-    if (page == null || String(page).trim() === "") {
-      return;
-    }
-
-    const pageElement = document.createElement("span");
-
-    pageElement.className = "source-page";
-
-    pageElement.textContent = String(page);
-
-    list.appendChild(pageElement);
+    container.appendChild(element);
   });
-
-  if (list.children.length > 0) {
-    container.appendChild(section);
-  }
 }
 
 /* ============================================================
  * Documents
  * ============================================================
- *
- * documents は詳細なRAG検索結果。
- *
- * 通常の受講生向け画面では回答本文や根拠資料ほど
- * 前面に出さず、必要に応じて確認できる領域として扱う。
- *
- * ============================================================
  */
 
 function renderDocuments(documents) {
-  const container = document.getElementById("documents");
+  /*
+   * 現在のquery.htmlには
+   * documents専用の表示領域がない。
+   *
+   * そのため、ここではkeyPoints等と混ぜず、
+   * APIレスポンスを内部状態として保持するだけにする。
+   *
+   * 回答本文には表示しない。
+   */
 
-  if (!container) {
+  window.disageLastDocuments = Array.isArray(documents) ? documents : [];
+}
+
+/* ============================================================
+ * Key Points
+ * ============================================================
+ */
+
+function renderKeyPoints(keyPoints) {
+  const section = document.getElementById("keyPointsSection");
+
+  const container = document.getElementById("keyPoints");
+
+  if (!section || !container) {
     return;
   }
 
   container.innerHTML = "";
 
-  if (!Array.isArray(documents) || documents.length === 0) {
+  if (!Array.isArray(keyPoints) || keyPoints.length === 0) {
+    section.hidden = true;
+
     return;
   }
 
-  const section = document.createElement("details");
+  section.hidden = false;
 
-  section.className = "answer-section";
+  keyPoints.forEach(function (point) {
+    const li = document.createElement("li");
 
-  section.innerHTML = `
-        <summary
-            class="answer-section-header"
-        >
-            <h3>
-                RAG検索結果詳細
-            </h3>
-        </summary>
+    li.textContent = point;
 
-        <div class="sources-list"></div>
-        `;
-
-  const list = section.querySelector(".sources-list");
-
-  documents.forEach(function (doc, index) {
-    const item = document.createElement("div");
-
-    item.className = "source-item";
-
-    const metadata = doc.metadata || {};
-
-    const page =
-      doc.page ||
-      metadata.page_reference ||
-      metadata.page ||
-      metadata.page_number ||
-      "";
-
-    item.innerHTML = `
-                <div
-                    class="source-item-header"
-                >
-
-                    <h4>
-                        Document ${index + 1}
-                    </h4>
-
-                    ${
-                      page
-                        ? `
-                                <span
-                                    class="page-reference"
-                                >
-                                    ${escapeHtml(page)}
-                                </span>
-                            `
-                        : ""
-                    }
-
-                </div>
-
-                <p class="source-meta">
-                    Score:
-                    ${formatNumber(doc.score)}
-
-                    /
-                    Distance:
-                    ${formatNumber(doc.distance)}
-                </p>
-
-                <details>
-
-                    <summary>
-                        Metadata
-                    </summary>
-
-                    <pre>${escapeHtml(JSON.stringify(metadata, null, 2))}</pre>
-
-                </details>
-
-                <details>
-
-                    <summary>
-                        Document
-                    </summary>
-
-                    <pre>${escapeHtml(doc.document || "")}</pre>
-
-                </details>
-                `;
-
-    list.appendChild(item);
+    container.appendChild(li);
   });
-
-  container.appendChild(section);
 }
 
 /* ============================================================
- * Number
+ * Related Materials
  * ============================================================
  */
 
-function formatNumber(value) {
-  if (value === null || value === undefined || value === "") {
-    return "-";
+function renderRelatedMaterials(materials) {
+  const section = document.getElementById("relatedMaterialsSection");
+
+  const container = document.getElementById("relatedMaterials");
+
+  if (!section || !container) {
+    return;
   }
 
-  const number = Number(value);
+  container.innerHTML = "";
 
-  if (Number.isNaN(number)) {
-    return escapeHtml(String(value));
+  if (!Array.isArray(materials) || materials.length === 0) {
+    section.hidden = true;
+
+    return;
   }
 
-  return number.toFixed(4);
+  section.hidden = false;
+
+  materials.forEach(function (material) {
+    const item = document.createElement("div");
+
+    item.className = "related-material-item";
+
+    item.textContent =
+      typeof material === "string"
+        ? material
+        : material.title || material.name || JSON.stringify(material);
+
+    container.appendChild(item);
+  });
 }
 
 /* ============================================================
  * Metadata
  * ============================================================
  *
- * 回答本文とは別のシステム情報。
- *
- * ・検索時間
- * ・LLM時間
- * ・総処理時間
- * ・検索件数
- * ・cache
- * ・fallback
- *
- * などをここに集約する。
+ * 回答本文とは完全に分離する。
  *
  * ============================================================
  */
 
 function renderMetadata(metadata) {
-  const container = document.getElementById("system-info");
-
-  if (!container) {
-    return;
-  }
-
   const data = metadata || {};
 
-  const rows = [
-    ["Query Analysis", data.query_analysis_elapsed_ms, " ms"],
+  setText(
+    "queryAnalysisElapsed",
+    formatMilliseconds(data.query_analysis_elapsed_ms),
+  );
 
-    ["Retrieval", data.retrieval_elapsed_ms, " ms"],
+  setText("retrievalElapsed", formatMilliseconds(data.retrieval_elapsed_ms));
 
-    ["Answerability", data.answerability_elapsed_ms, " ms"],
+  setText(
+    "answerabilityElapsed",
+    formatMilliseconds(data.answerability_elapsed_ms),
+  );
 
-    ["LLM", data.llm_elapsed_ms, " ms"],
+  setText("llmElapsed", formatMilliseconds(data.llm_elapsed_ms));
 
-    ["Total", data.total_elapsed_ms, " ms"],
+  setText("totalElapsed", formatMilliseconds(data.total_elapsed_ms));
 
-    ["Retrieved Count", data.retrieved_count, ""],
+  setText("retrievedCount", formatValue(data.retrieved_count));
 
-    ["Gate Candidate Count", data.gate_candidate_count, ""],
+  setText("gateCandidateCount", formatValue(data.gate_candidate_count));
 
-    ["Final Context Count", data.final_context_count, ""],
+  setText("finalContextCount", formatValue(data.final_context_count));
 
-    ["Cache Hit", data.cache_hit ? "true" : "false", ""],
+  setText("cacheHit", formatBoolean(data.cache_hit));
 
-    ["Fallback Used", data.fallback_used ? "true" : "false", ""],
-  ];
+  setText("fallbackUsed", formatBoolean(data.fallback_used));
+}
 
-  const visibleRows = rows.filter(function (row) {
-    return row[1] !== undefined && row[1] !== null;
-  });
-
-  if (visibleRows.length === 0) {
-    container.innerHTML = "";
-
-    return;
+function formatMilliseconds(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
   }
 
-  container.innerHTML = `
-        <details>
+  return String(value) + " ms";
+}
 
-            <summary>
-                システム情報
-            </summary>
+function formatValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
 
-            <table
-                class="system-info-table"
-            >
+  return String(value);
+}
 
-                <tbody>
+function formatBoolean(value) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
 
-                    ${visibleRows
-                      .map(function (row) {
-                        return `
-                                        <tr>
-
-                                            <th>
-                                                ${escapeHtml(row[0])}
-                                            </th>
-
-                                            <td>
-                                                ${escapeHtml(
-                                                  String(row[1]),
-                                                )}${escapeHtml(row[2])}
-                                            </td>
-
-                                        </tr>
-                                    `;
-                      })
-                      .join("")}
-
-                </tbody>
-
-            </table>
-
-        </details>
-        `;
+  return value ? "有" : "無";
 }
 
 /* ============================================================
@@ -744,15 +617,21 @@ function renderMetadata(metadata) {
 function clearAnswer() {
   renderAnswer("");
 
+  renderAnswerStatus("");
+
   renderAnswerability("", "");
 
-  clearElement("sources");
+  renderSources([]);
 
-  clearElement("source-pages");
+  renderSourcePages([]);
 
-  clearElement("documents");
+  renderKeyPoints([]);
 
-  clearElement("system-info");
+  renderRelatedMaterials([]);
+
+  renderMetadata({});
+
+  window.disageLastDocuments = [];
 }
 
 /* ============================================================
@@ -763,6 +642,8 @@ function clearAnswer() {
 function showLoading() {
   const answer = document.getElementById("answer");
 
+  const status = document.getElementById("answerStatus");
+
   if (answer) {
     answer.innerHTML = `
             <div class="loading-state">
@@ -770,7 +651,13 @@ function showLoading() {
                     回答を生成しています...
                 </p>
             </div>
-            `;
+        `;
+  }
+
+  if (status) {
+    status.textContent = "回答生成中";
+
+    status.className = "answer-status";
   }
 }
 
@@ -782,23 +669,418 @@ function showLoading() {
 function renderError(message) {
   const answer = document.getElementById("answer");
 
-  if (!answer) {
+  const status = document.getElementById("answerStatus");
+
+  if (answer) {
+    answer.innerHTML = `
+
+            <div
+                class="error-message"
+            >
+
+                <h3>
+                    エラー
+                </h3>
+
+                <p>
+                    ${escapeHtml(message)}
+                </p>
+
+            </div>
+
+        `;
+  }
+
+  if (status) {
+    status.textContent = "エラー";
+
+    status.className = "answer-status answerability-none";
+  }
+}
+
+/* ============================================================
+ * Question List
+ * ============================================================
+ */
+
+function renderQuestionList() {
+  const container = document.getElementById("questionList");
+
+  const countElement = document.getElementById("questionCount");
+
+  if (!container) {
     return;
   }
 
-  answer.innerHTML = `
-        <div class="error-message">
+  const history = getLocalHistory();
 
-            <h3>
-                エラー
-            </h3>
+  if (countElement) {
+    countElement.textContent = history.length;
+  }
 
-            <p>
-                ${escapeHtml(message)}
-            </p>
+  if (history.length === 0) {
+    container.innerHTML = `
 
-        </div>
+            <div class="empty-state">
+
+                <p>
+                    質問はまだありません。
+                </p>
+
+                <p>
+                    下の入力欄から質問してください。
+                </p>
+
+            </div>
+
         `;
+
+    return;
+  }
+
+  container.innerHTML = history
+    .map(function (turn, index) {
+      return `
+
+                        <button
+                            type="button"
+                            class="question-item"
+                            data-history-index="${index}"
+                        >
+
+                            <span>
+                                ${escapeHtml(turn.question)}
+                            </span>
+
+                        </button>
+
+                    `;
+    })
+    .join("");
+}
+
+/* ============================================================
+ * Thread List
+ * ============================================================
+ */
+
+function renderThreadList() {
+  const container = document.getElementById("threadList");
+
+  const countElement = document.getElementById("threadCount");
+
+  if (!container) {
+    return;
+  }
+
+  const history = getLocalHistory();
+
+  if (countElement) {
+    countElement.textContent = history.length > 0 ? "1" : "0";
+  }
+
+  if (history.length === 0) {
+    container.innerHTML = `
+
+            <div class="empty-state">
+
+                <p>
+                    スレッドはありません。
+                </p>
+
+            </div>
+
+        `;
+
+    return;
+  }
+
+  const firstQuestion = history[0].question || "新しいスレッド";
+
+  container.innerHTML = `
+
+        <button
+            type="button"
+            class="thread-item active"
+            data-thread-index="0"
+        >
+
+            <span
+                class="thread-item-title"
+            >
+                ${escapeHtml(firstQuestion)}
+            </span>
+
+            <span
+                class="thread-item-meta"
+            >
+                ${history.length}件の質問
+            </span>
+
+        </button>
+
+    `;
+}
+
+/* ============================================================
+ * Thread Title
+ * ============================================================
+ */
+
+function updateThreadHeader() {
+  const title = document.getElementById("currentThreadTitle");
+
+  const summary = document.getElementById("currentThreadSummary");
+
+  const history = getLocalHistory();
+
+  if (!title) {
+    return;
+  }
+
+  if (history.length === 0) {
+    title.textContent = "新しいスレッド";
+
+    if (summary) {
+      summary.textContent = "質問を送信して会話を開始してください。";
+    }
+
+    return;
+  }
+
+  title.textContent = history[0].question || "研修AIアシスタント";
+
+  if (summary) {
+    summary.textContent = `${history.length}件の質問`;
+  }
+}
+
+/* ============================================================
+ * History Selection
+ * ============================================================
+ */
+
+function selectHistoryItem(index) {
+  const history = getLocalHistory();
+
+  const turn = history[index];
+
+  if (!turn) {
+    return;
+  }
+
+  renderAnswer(turn.answer || "");
+
+  renderAnswerStatus(turn.answerability_status || "");
+
+  renderAnswerability(
+    turn.answerability_status || "",
+    turn.answerability_reason || "",
+  );
+
+  renderSources(turn.sources || []);
+
+  renderSourcePages(turn.source_pages || []);
+
+  renderDocuments(turn.documents || []);
+
+  renderMetadata(turn.metadata || {});
+
+  document.querySelectorAll("[data-history-index]").forEach(function (element) {
+    element.classList.remove("active");
+  });
+
+  document.querySelectorAll("[data-history-index]").forEach(function (element) {
+    if (Number(element.dataset.historyIndex) === index) {
+      element.classList.add("active");
+    }
+  });
+}
+
+/* ============================================================
+ * History Events
+ * ============================================================
+ */
+
+function setupHistoryEvents() {
+  const threadList = document.getElementById("threadList");
+
+  const questionList = document.getElementById("questionList");
+
+  if (threadList) {
+    threadList.addEventListener("click", function (event) {
+      const item = event.target.closest("[data-thread-index]");
+
+      if (!item) {
+        return;
+      }
+
+      renderQuestionList();
+    });
+  }
+
+  if (questionList) {
+    questionList.addEventListener("click", function (event) {
+      const item = event.target.closest("[data-history-index]");
+
+      if (!item) {
+        return;
+      }
+
+      const index = Number(item.dataset.historyIndex);
+
+      if (Number.isNaN(index)) {
+        return;
+      }
+
+      selectHistoryItem(index);
+    });
+  }
+}
+
+/* ============================================================
+ * Enter Key
+ * ============================================================
+ */
+
+function setupQuestionInput() {
+  const question = document.getElementById("question");
+
+  if (!question) {
+    return;
+  }
+
+  question.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+
+      askQuestion();
+    }
+  });
+}
+
+/* ============================================================
+ * New Thread
+ * ============================================================
+ */
+
+function resetSession() {
+  const newSessionId = generateSessionId();
+
+  localStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+
+  localStorage.removeItem(HISTORY_STORAGE_KEY);
+
+  const sessionElement = document.getElementById("sessionId");
+
+  if (sessionElement) {
+    sessionElement.value = newSessionId;
+  }
+
+  clearAnswer();
+
+  renderThreadList();
+
+  renderQuestionList();
+
+  updateThreadHeader();
+}
+
+/* ============================================================
+ * New Thread Button
+ * ============================================================
+ */
+
+function setupNewThreadButton() {
+  const button = document.getElementById("newThreadButton");
+
+  if (!button) {
+    return;
+  }
+
+  button.addEventListener("click", function () {
+    resetSession();
+  });
+}
+
+/* ============================================================
+ * Bookmark
+ * ============================================================
+ *
+ * 現段階ではブックマークAPIが存在しないため、
+ * ブラウザ上のUI状態だけを保持する。
+ *
+ * サーバー保存は実施しない。
+ *
+ * ============================================================
+ */
+
+function setupBookmarkButton() {
+  const button = document.getElementById("bookmarkButton");
+
+  if (!button) {
+    return;
+  }
+
+  button.addEventListener("click", function () {
+    const active = button.dataset.bookmarked === "true";
+
+    button.dataset.bookmarked = active ? "false" : "true";
+
+    button.textContent = active ? "☆" : "★";
+
+    button.setAttribute("aria-pressed", active ? "false" : "true");
+  });
+}
+
+/* ============================================================
+ * Thread Search
+ * ============================================================
+ */
+
+function setupThreadSearch() {
+  const input = document.getElementById("threadSearch");
+
+  if (!input) {
+    return;
+  }
+
+  input.addEventListener("input", function () {
+    const keyword = input.value.trim().toLowerCase();
+
+    const items = document.querySelectorAll("#threadList .thread-item");
+
+    items.forEach(function (item) {
+      const text = item.textContent.toLowerCase();
+
+      item.hidden = keyword !== "" && !text.includes(keyword);
+    });
+  });
+}
+
+/* ============================================================
+ * Question Status
+ * ============================================================
+ */
+
+function updateQuestionInputStatus() {
+  const question = document.getElementById("question");
+
+  const status = document.getElementById("questionInputStatus");
+
+  if (!question || !status) {
+    return;
+  }
+
+  const length = question.value.length;
+
+  if (length === 0) {
+    status.textContent = "質問を入力してください。";
+
+    return;
+  }
+
+  status.textContent = `${length}文字`;
 }
 
 /* ============================================================
@@ -829,21 +1111,25 @@ async function askQuestion() {
     return;
   }
 
+  const history = getLocalHistory();
+
+  if (history.length >= MAX_QUESTIONS_PER_THREAD) {
+    const dialog = document.getElementById("newThreadDialog");
+
+    if (dialog && typeof dialog.showModal === "function") {
+      dialog.showModal();
+    } else {
+      resetSession();
+    }
+
+    return;
+  }
+
   if (askButton) {
     askButton.disabled = true;
   }
 
   showLoading();
-
-  clearElement("answerability");
-
-  clearElement("sources");
-
-  clearElement("source-pages");
-
-  clearElement("documents");
-
-  clearElement("system-info");
 
   try {
     const response = await fetch("/query", {
@@ -876,62 +1162,67 @@ async function askQuestion() {
       throw new Error(detail || `HTTP ${response.status}`);
     }
 
-    /* ----------------------------------------------------
+    /* --------------------------------------------
      * Answer
-     * ----------------------------------------------------
+     * --------------------------------------------
      */
 
     renderAnswer(json.answer || "");
 
-    /* ----------------------------------------------------
+    renderAnswerStatus(json.answerability_status || "");
+
+    /* --------------------------------------------
      * Answerability
-     * ----------------------------------------------------
+     * --------------------------------------------
      */
 
     renderAnswerability(
-      json.answerability_status,
-
-      json.answerability_reason,
+      json.answerability_status || "",
+      json.answerability_reason || "",
     );
 
-    /* ----------------------------------------------------
+    /* --------------------------------------------
      * Sources
-     * ----------------------------------------------------
+     * --------------------------------------------
      */
 
     renderSources(json.sources || []);
 
-    /* ----------------------------------------------------
+    /* --------------------------------------------
      * Source Pages
-     * ----------------------------------------------------
+     * --------------------------------------------
      */
 
     renderSourcePages(json.source_pages || []);
 
-    /* ----------------------------------------------------
+    /* --------------------------------------------
      * Documents
-     * ----------------------------------------------------
+     * --------------------------------------------
      */
 
     renderDocuments(json.documents || []);
 
-    /* ----------------------------------------------------
+    /* --------------------------------------------
+     * Optional UI Information
+     * --------------------------------------------
+     */
+
+    renderKeyPoints(json.key_points || []);
+
+    renderRelatedMaterials(json.related_materials || []);
+
+    /* --------------------------------------------
      * Metadata
-     * ----------------------------------------------------
      *
-     * elapsed_ms / retrieved_count を回答本文へ
-     * 混在させない。
-     *
-     * 正式なシステム情報はmetadataを使用する。
-     *
-     * ----------------------------------------------------
+     * 回答本文とは別項目。
+     * --------------------------------------------
      */
 
     renderMetadata(json.metadata || {});
 
-    /* ----------------------------------------------------
+    /* --------------------------------------------
      * Local History
-     * ----------------------------------------------------
+     * --------------------------------------------
      */
 
     appendLocalHistory(
@@ -940,9 +1231,20 @@ async function askQuestion() {
       json.answer || "",
 
       json.answerability_status || "",
+
+      json,
     );
 
+    /* --------------------------------------------
+     * Clear Input
+     * --------------------------------------------
+     */
+
     questionElement.value = "";
+
+    updateQuestionInputStatus();
+
+    updateThreadHeader();
   } catch (error) {
     console.error("質問処理に失敗しました。", error);
 
@@ -955,92 +1257,39 @@ async function askQuestion() {
 }
 
 /* ============================================================
- * Reset Session
+ * Dialog
  * ============================================================
  */
 
-function resetSession() {
-  const newSessionId = generateSessionId();
+function setupNewThreadDialog() {
+  const createButton = document.getElementById("createNewThreadButton");
 
-  localStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+  const dialog = document.getElementById("newThreadDialog");
 
-  localStorage.removeItem(HISTORY_STORAGE_KEY);
-
-  const sessionElement = document.getElementById("sessionId");
-
-  if (sessionElement) {
-    sessionElement.value = newSessionId;
-  }
-
-  renderHistory();
-
-  clearAnswer();
-}
-
-/* ============================================================
- * History Event
- * ============================================================
- */
-
-function setupHistoryEvents() {
-  const container = document.getElementById("history");
-
-  if (!container) {
+  if (!createButton || !dialog) {
     return;
   }
 
-  container.addEventListener("click", function (event) {
-    const item = event.target.closest(".thread-item");
+  createButton.addEventListener("click", function () {
+    dialog.close();
 
-    if (!item) {
-      return;
-    }
-
-    const index = Number(item.dataset.historyIndex);
-
-    if (Number.isNaN(index)) {
-      return;
-    }
-
-    const history = getLocalHistory();
-
-    const turn = history[index];
-
-    if (!turn) {
-      return;
-    }
-
-    renderAnswer(turn.answer || "");
-
-    renderAnswerability(turn.answerability_status || "", "");
-
-    document.querySelectorAll(".thread-item").forEach(function (element) {
-      element.classList.remove("active");
-    });
-
-    item.classList.add("active");
+    resetSession();
   });
 }
 
 /* ============================================================
- * Enter Key
+ * Input Event
  * ============================================================
  */
 
-function setupQuestionInput() {
+function setupQuestionInputStatus() {
   const question = document.getElementById("question");
 
   if (!question) {
     return;
   }
 
-  question.addEventListener("keydown", function (event) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-
-      askQuestion();
-    }
-  });
+  question.addEventListener("input", updateQuestionInputStatus);
 }
 
 /* ============================================================
@@ -1055,11 +1304,27 @@ function initSessionUi() {
     sessionElement.value = getSessionId();
   }
 
-  renderHistory();
+  renderThreadList();
+
+  renderQuestionList();
+
+  updateThreadHeader();
 
   setupHistoryEvents();
 
   setupQuestionInput();
+
+  setupQuestionInputStatus();
+
+  setupNewThreadButton();
+
+  setupBookmarkButton();
+
+  setupThreadSearch();
+
+  setupNewThreadDialog();
+
+  updateQuestionInputStatus();
 }
 
 /* ============================================================

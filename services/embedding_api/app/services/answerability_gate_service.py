@@ -1,73 +1,52 @@
 import logging
 
-from app.models.retrieval_item import RetrievalItem
-from app.services.llm_service import llm_service
+from app.models.answerability import (
+    AnswerabilityResult,
+    AnswerabilityStatus
+)
+
+from app.models.retrieval_item import (
+    RetrievalItem
+)
+
+from app.services.llm_service import (
+    llm_service
+)
+
 
 logger = logging.getLogger(__name__)
 
 
 class AnswerabilityGateService:
 
-    #
-    # ------------------------------------------------------
+    # ======================================================
     # Answerability Gate
-    # ------------------------------------------------------
+    # ======================================================
     #
-    # Reranker通過後の上位資料であっても、単語の一致だけで
-    # min_rerank_scoreを超えてしまうケースがある
-    # （例: 「今日の天気は？」に対し、コード例中の
-    # `<%= weather %>` がヒットする）。
+    # Rerankerのスコアだけでは、
+    # 「単語は一致しているが質問には答えていない」
+    # というケースを完全には除去できない。
     #
-    # 最終的にLLMへ渡す前に、軽量LLM（llama-rewriter）で
-    # 「この質問に、これらの資料は実際に答えているか」を
-    # Yes/No判定する最終防衛ラインとして機能する。
+    # そこで軽量LLMを使用し、
     #
-    # 対象は上位数件（TOP_N）をまとめて渡し、
-    # どれか1件でも答えられればYesとする。
+    # FULL
+    # PARTIAL
+    # NONE
     #
-    # 判定失敗（タイムアウト等）時はNo扱いとし、
-    # 安全側（無理に回答しない）に倒す。
+    # の3段階で判定する。
     #
-
-    #
-    # Gateに渡す候補数。
-    #
-    # rerank_relaxed側で目次チャンクを除外するため、
-    # フィルタ後も十分な判断材料が残るよう、
-    # 単純なスコア上位3件よりやや広めに5件とする。
-    #
-    # UI操作手順・コード断片・演習の出力例等、目次以外の
-    # ノイズはルールベースでは除外しきれないため
-    # （正当な内容との境界が曖昧で誤検出リスクが高い）、
-    # 候補数を広げることでノイズが多少混ざっても
-    # 本文チャンクがGateの目に入りやすくする。
-    #
+    # ======================================================
 
     TOP_N = 5
 
-    #
-    # LLMの応答を解析してYesと判断する接頭語。
-    #
-    # 軽量モデルの応答揺れを吸収するため、
-    # 大文字小文字を無視し、複数の表現を許容する。
-    #
-
-    YES_PREFIXES = (
-
-        "yes",
-
-        "はい"
-
-    )
+    # ======================================================
+    # Prompt
+    # ======================================================
 
     def _build_prompt(
-
         self,
-
         question: str,
-
         contexts: list[str]
-
     ) -> str:
 
         joined_contexts = "\n\n".join(
@@ -75,27 +54,79 @@ class AnswerabilityGateService:
             f"[資料{index}]\n{context}"
 
             for index, context in enumerate(
-
                 contexts,
-
                 start=1
-
             )
 
         )
 
         return f"""
-以下の資料が、質問に実際に答えているかどうかを判定してください。
+あなたはRAG検索結果の「回答可能性」を判定する
+アシスタントです。
 
-# 判定基準
+以下の資料と質問を比較し、
+資料が質問に対してどの程度回答できるかを判定してください。
 
-・資料の中に、質問への直接的な回答が明確に含まれている場合のみ「Yes」。
-・資料中に質問と同じ単語が含まれているだけで、
-  質問の意図には答えていない場合は「No」。
-・資料がプログラムのコード例・サンプルコードであり、
-  実際のデータや実行結果を示すものではない場合、
-  それを根拠に質問へ答えることはできないため「No」。
-・少しでも判断に迷う場合は「No」としてください。
+# 判定
+
+次の3つのいずれかを選択してください。
+
+FULL
+資料に、質問への回答に必要な情報が十分に存在する。
+
+PARTIAL
+資料に質問に関連する有用な情報が存在するが、
+質問の一部の条件、指定、順位、具体値などが
+資料から確認できない。
+
+NONE
+資料に質問へ回答するための有用な情報が
+ほとんど存在しない。
+
+# 重要な判定ルール
+
+・質問と資料に同じ単語があるだけではFULLにしない。
+
+・資料に関連する情報が存在する場合、
+質問の一部が資料にないだけでNONEにしてはいけない。
+
+・質問が複数の条件を含む場合、
+条件ごとに資料で確認できるか判断してください。
+
+・例えば、
+
+質問：
+「基本データ型のうち、よく使用する上位3つについて
+サンプルコードを出してください。」
+
+資料：
+「基本データ型にはboolean、byte、short、int、
+long、float、doubleがある。」
+
+この場合、
+
+基本データ型の一覧
+→ 資料から確認できる
+
+よく使用する上位3つという順位
+→ 資料から確認できない
+
+サンプルコード
+→ 基本データ型という関連情報があるため生成可能
+
+したがって判定はPARTIALです。
+
+・資料にサンプルコードそのものがなくても、
+資料に対象となる概念・仕様・構文などがある場合は、
+関連する回答を生成できる可能性があるため、
+サンプルコード要求だけを理由にNONEにしないでください。
+
+・HTML、CSS、SQLなどについても、
+RAG資料に説明が存在する場合は、
+「Java研修の範囲外」という理由だけでNONEにしないでください。
+
+・資料から確認できない部分があっても、
+関連情報が存在する場合はPARTIALとしてください。
 
 # 資料
 
@@ -107,103 +138,212 @@ class AnswerabilityGateService:
 
 # 出力形式
 
-"Yes" または "No" の一語のみを出力してください。
-理由や説明は不要です。
+必ず次のJSON形式だけを出力してください。
 
-# 判定結果
+{{
+  "status": "FULL",
+  "reason": "資料に質問への回答に必要な情報があります。"
+}}
+
+statusにはFULL、PARTIAL、NONEのいずれかを指定してください。
+
+reasonには、日本語で短い判定理由を記載してください。
+
+JSON以外の文章は出力しないでください。
 """
 
-    #
-    # ------------------------------------------------------
-    # 判定
-    # ------------------------------------------------------
-    #
-    # 戻り値 : True の場合、資料は質問に回答可能と判定
-    #
+    # ======================================================
+    # Response Parse
+    # ======================================================
 
-    def is_answerable(
-
+    def _parse_response(
         self,
+        response: str
+    ) -> AnswerabilityResult:
 
-        question: str,
+        import json
 
+        if not response:
+
+            return AnswerabilityResult(
+
+                status=AnswerabilityStatus.NONE,
+
+                reason="Answerability Gateの応答が空でした。"
+
+            )
+
+        text = response.strip()
+
+        # --------------------------------------------------
+        # JSON部分だけを抽出
+        # --------------------------------------------------
+
+        start = text.find("{")
+
+        end = text.rfind("}")
+
+        if start >= 0 and end > start:
+
+            text = text[
+                start:end + 1
+            ]
+
+        try:
+
+            data = json.loads(
+                text
+            )
+
+            status_text = str(
+                data.get(
+                    "status",
+                    ""
+                )
+            ).strip().upper()
+
+            reason = str(
+                data.get(
+                    "reason",
+                    ""
+                )
+            ).strip()
+
+            if status_text == "FULL":
+
+                return AnswerabilityResult(
+
+                    status=AnswerabilityStatus.FULL,
+
+                    reason=reason
+                    or "資料から質問への回答が確認できます。"
+
+                )
+
+            if status_text == "PARTIAL":
+
+                return AnswerabilityResult(
+
+                    status=AnswerabilityStatus.PARTIAL,
+
+                    reason=reason
+                    or "資料に関連情報がありますが、一部を確認できません。"
+
+                )
+
+            if status_text == "NONE":
+
+                return AnswerabilityResult(
+
+                    status=AnswerabilityStatus.NONE,
+
+                    reason=reason
+                    or "資料から質問への回答に必要な情報を確認できません。"
+
+                )
+
+        except Exception:
+
+            logger.warning(
+                "Answerability Gate JSON parse failed: %s",
+                response
+            )
+
+        # --------------------------------------------------
+        # JSON解析失敗時のフォールバック
+        # --------------------------------------------------
+
+        normalized = (
+            response
+            .strip()
+            .lower()
+        )
+
+        if normalized.startswith(
+            "full"
+        ) or normalized.startswith(
+            "yes"
+        ) or normalized.startswith(
+            "はい"
+        ):
+
+            return AnswerabilityResult(
+
+                status=AnswerabilityStatus.FULL,
+
+                reason="Answerability Gateが肯定判定しました。"
+
+            )
+
+        if normalized.startswith(
+            "partial"
+        ):
+
+            return AnswerabilityResult(
+
+                status=AnswerabilityStatus.PARTIAL,
+
+                reason="Answerability Gateが部分的な回答可能性を判定しました。"
+
+            )
+
+        return AnswerabilityResult(
+
+            status=AnswerabilityStatus.NONE,
+
+            reason="Answerability Gateの判定を解析できませんでした。"
+
+        )
+
+    # ======================================================
+    # Candidate Logging
+    # ======================================================
+
+    def _log_candidates(
+        self,
         items: list[RetrievalItem]
-
-    ) -> bool:
-
-        if not items:
-
-            return False
-
-        top_items = items[:self.TOP_N]
-
-        contexts = [
-
-            item.document
-
-            for item in top_items
-
-        ]
-
-        #
-        # デバッグ : Gateに実際に渡される資料を全文ログに残す
-        # ------------------------------------------------------
-        #
-        # 「Gateの判定結果」だけでは、そもそも渡された資料の
-        # 中身が質問に関連しているのかを確認できないため、
-        # 候補ごとにdocument_id・chunk_no・スコア・全文を
-        # ログへ出力する。
-        #
+    ):
 
         logger.info(
-
             "----------------------------------------"
-
         )
 
         logger.info(
-
-            "Answerability Gate Candidates (raw)"
-
+            "Answerability Gate Candidates"
         )
 
         logger.info(
-
             "----------------------------------------"
-
         )
 
         for index, item in enumerate(
-
-            top_items,
-
+            items,
             start=1
-
         ):
 
-            metadata = item.metadata or {}
+            metadata = (
+                item.metadata
+                or {}
+            )
 
             logger.info(
 
-                "[Gate候補 %d] document_id=%s chunk_no=%s "
-                "score=%.4f distance=%.4f",
+                "[Gate候補 %d] "
+                "document_id=%s "
+                "chunk_no=%s "
+                "score=%.4f "
+                "distance=%.4f",
 
                 index,
 
                 metadata.get(
-
                     "document_id",
-
                     ""
-
                 ),
 
                 metadata.get(
-
                     "chunk_no",
-
                     ""
-
                 ),
 
                 item.score,
@@ -223,10 +363,44 @@ class AnswerabilityGateService:
             )
 
         logger.info(
-
             "----------------------------------------"
-
         )
+
+    # ======================================================
+    # Assess
+    # ======================================================
+
+    def assess(
+        self,
+        question: str,
+        items: list[RetrievalItem]
+    ) -> AnswerabilityResult:
+
+        if not items:
+
+            return AnswerabilityResult(
+
+                status=AnswerabilityStatus.NONE,
+
+                reason="RAG検索結果がありません。"
+
+            )
+
+        top_items = items[
+            :self.TOP_N
+        ]
+
+        self._log_candidates(
+            top_items
+        )
+
+        contexts = [
+
+            item.document
+
+            for item in top_items
+
+        ]
 
         prompt = self._build_prompt(
 
@@ -238,79 +412,100 @@ class AnswerabilityGateService:
 
         try:
 
-            response = llm_service.ask_rewriter(
-
-                prompt
-
+            response = (
+                llm_service.ask_rewriter(
+                    prompt
+                )
             )
 
         except Exception:
 
             logger.exception(
 
-                "Answerability Gate judgement failed. "
-                "Falling back to No (deny answering)."
+                "Answerability Gate judgement failed."
 
             )
 
-            return False
+            return AnswerabilityResult(
 
-        normalized = response.strip().lower()
+                status=AnswerabilityStatus.NONE,
 
-        result = normalized.startswith(
+                reason=(
+                    "Answerability Gateの判定に失敗しました。"
+                )
 
-            self.YES_PREFIXES
+            )
 
+        result = self._parse_response(
+            response
         )
 
         logger.info(
-
             "----------------------------------------"
-
         )
 
         logger.info(
-
-            "Answerability Gate Raw Response"
-
+            "Answerability Gate Result"
         )
 
         logger.info(
-
             "----------------------------------------"
-
         )
 
         logger.info(
+            "Question : %s",
+            question
+        )
 
-            "%s",
-
+        logger.info(
+            "Raw Response : %s",
             response.strip()
-
         )
 
         logger.info(
+            "Status : %s",
+            result.status.value
+        )
 
+        logger.info(
+            "Reason : %s",
+            result.reason
+        )
+
+        logger.info(
             "----------------------------------------"
-
-        )
-
-        logger.info(
-
-            "Answerability Gate : question=%s "
-            "candidates=%d parsed_result=%s -> answerable=%s",
-
-            question,
-
-            len(top_items),
-
-            normalized[:50],
-
-            result
-
         )
 
         return result
 
+    # ======================================================
+    # Backward Compatibility
+    # ======================================================
+    #
+    # 既存コードがis_answerable()を呼んでいる場合に備えて、
+    # メソッド自体は残す。
+    #
+    # ただし新規コードではassess()を使用する。
+    #
+    # ======================================================
 
-answerability_gate_service = AnswerabilityGateService()
+    def is_answerable(
+        self,
+        question: str,
+        items: list[RetrievalItem]
+    ) -> bool:
+
+        result = self.assess(
+            question,
+            items
+        )
+
+        return (
+            result.status
+            != AnswerabilityStatus.NONE
+        )
+
+
+answerability_gate_service = (
+    AnswerabilityGateService()
+)

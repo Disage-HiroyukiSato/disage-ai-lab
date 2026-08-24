@@ -599,10 +599,16 @@ class RetrievalService:
 
                 continue
 
+            normalized_metadata = (
+                self._normalize_metadata(
+                    metadata
+                )
+            )
+
             items.append(
                 RetrievalItem(
                     document=document,
-                    metadata=metadata or {},
+                    metadata=normalized_metadata,
                     distance=float(distance)
                 )
             )
@@ -945,5 +951,53 @@ class RetrievalService:
 
         )
 
+    def _normalize_metadata(
+        self,
+        metadata: dict | None
+    ) -> dict:
+        """
+        RAG検索結果のmetadataを正規化する。
+
+        ページ情報については page_reference を正式キーとする。
+
+        既存データに page / page_number が存在する場合は、
+        page_reference が未設定のときだけ引き継ぐ。
+        """
+
+        normalized = dict(
+            metadata or {}
+        )
+
+        # --------------------------------------------------
+        # page_reference
+        # --------------------------------------------------
+        #
+        # 正式キー：
+        #     page_reference
+        #
+        # 旧形式：
+        #     page
+        #     page_number
+        #
+        # --------------------------------------------------
+
+        if not normalized.get(
+            "page_reference"
+        ):
+
+            page_reference = (
+                normalized.get("page")
+                or normalized.get("page_number")
+            )
+
+            if page_reference is not None:
+
+                normalized[
+                    "page_reference"
+                ] = str(
+                    page_reference
+                )
+
+        return normalized
 
 retrieval_service = RetrievalService()

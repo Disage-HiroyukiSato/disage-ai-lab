@@ -3,15 +3,15 @@ import re
 
 from app.models.retrieval_item import RetrievalItem
 
+
 logger = logging.getLogger(__name__)
 
 
 class ContextDedupService:
 
-    #
-    # ------------------------------------------------------
+    # ======================================================
     # 最終Context重複除去
-    # ------------------------------------------------------
+    # ======================================================
     #
     # RAG検索結果そのものには手を加えず、
     # 最終的にLLMへ渡すContextだけを対象とする。
@@ -19,18 +19,30 @@ class ContextDedupService:
     # Phase14の検索・Reranker・Answerability Gateの結果を
     # 変更しないことが目的。
     #
-    # 現段階では「完全一致」の重複だけを除去する。
+    # ------------------------------------------------------
+    # 重複判定
+    # ------------------------------------------------------
     #
-    # 類似度による重複除去は意図的に行わない。
+    # 現段階では完全一致のContextだけを重複として扱う。
+    #
+    # 改行・連続空白など、表記上の差だけは正規化して
+    # 同一Contextとして扱う。
+    #
+    # 一方、
+    #
+    # ・類似文章
+    # ・同一テーマだが内容が異なる文章
+    # ・同一document内の近似chunk
+    #
+    # については削除しない。
     #
     # 理由：
     #
-    #   類似しているが異なる説明を誤って削除すると、
-    #   RAGの情報量を減らしてしまう可能性がある。
+    # 類似しているという理由だけでContextを削除すると、
+    # 回答に必要な情報まで失う可能性があるため。
     #
-    # まずは完全一致による安全な重複除去だけを行い、
-    # 実際の検索ログを確認したうえで、必要なら
-    # 次の段階として類似度ベースの重複除去を検討する。
+    # 類似度ベースの重複除去は、実際の検索ログを確認したうえで
+    # 将来必要になった場合に別途検討する。
     #
 
     def deduplicate(
@@ -39,6 +51,7 @@ class ContextDedupService:
     ) -> list[RetrievalItem]:
 
         if not items:
+
             return []
 
         result: list[RetrievalItem] = []
@@ -49,13 +62,24 @@ class ContextDedupService:
 
         for item in items:
 
-            normalized_document = self._normalize(
-                item.document
+            # --------------------------------------------------
+            # Context本文
+            # --------------------------------------------------
+
+            normalized_document = (
+                self._normalize(
+                    item.document
+                )
             )
 
+            # --------------------------------------------------
+            # 空Context
+            # --------------------------------------------------
             #
-            # documentが空の場合はContextとして意味がないため、
-            # 最終Contextから除外する。
+            # documentが空の場合は、LLMへ渡すContextとして
+            # 意味がないため除外する。
+            #
+            # RetrievalItemそのものは変更しない。
             #
 
             if not normalized_document:
@@ -69,8 +93,22 @@ class ContextDedupService:
 
                 continue
 
+            # --------------------------------------------------
+            # 完全一致重複
+            # --------------------------------------------------
             #
-            # 完全一致するdocumentを除外する。
+            # 正規化後のdocument本文が完全一致する場合のみ
+            # 重複として扱う。
+            #
+            # 最初に登場したItemを残す。
+            #
+            # QueryServiceでは、
+            #
+            # reranked_items + gate_candidates
+            #
+            # の順で渡されるため、
+            # 同じContextが存在した場合は通常のReranker結果を
+            # 優先して残すことになる。
             #
 
             if normalized_document in seen:
@@ -105,11 +143,13 @@ class ContextDedupService:
 
         return result
 
-    # ------------------------------------------------------
-    # 正規化
-    # ------------------------------------------------------
+    # ======================================================
+    # Context正規化
+    # ======================================================
     #
-    # 改行・連続空白など、表記上の違いだけを吸収する。
+    # 重複判定専用の正規化。
+    #
+    # RetrievalItem.documentそのものは変更しない。
     #
     # 例：
     #
@@ -119,10 +159,10 @@ class ContextDedupService:
     #
     #   "boolean は\n論理型です。"
     #
-    # を同一Contextとして扱う。
+    # は同一Contextとして扱う。
     #
-    # ただし、文字列そのものを加工してresultへ返すことはしない。
-    # 元のRetrievalItemをそのまま保持する。
+    # ただし、句読点や文字列内容そのものを変更するような
+    # 強い正規化は行わない。
     #
 
     def _normalize(
@@ -131,6 +171,7 @@ class ContextDedupService:
     ) -> str:
 
         if not text:
+
             return ""
 
         return re.sub(

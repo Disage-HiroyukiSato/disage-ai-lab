@@ -74,10 +74,20 @@ class QueryService:
         self,
         gate_candidates: list
     ) -> bool:
+        """
+        Answerability Gateへ渡す候補が存在しない場合を
+        弱い検索結果として扱う。
 
-        return len(
-            gate_candidates
-        ) == 0
+        注意：
+        ここでは「回答不能」とは判定しない。
+
+        あくまで、
+        knowledge_queryによる検索結果が不足しているため、
+        元質問によるFallback検索を試行するかどうかを
+        判定するだけである。
+        """
+
+        return len(gate_candidates) == 0
 
     # ======================================================
     # Search + Rerank
@@ -90,6 +100,18 @@ class QueryService:
         current_chapter: str,
         limit: int
     ):
+        """
+        Retrieval → Reranker → Answerability Gate候補生成。
+
+        戻り値：
+
+            retrieval_result
+            reranked_items
+            gate_candidates
+            rerank_elapsed_ms
+
+        rerankerの処理時間もここで計測する。
+        """
 
         retrieval_result = (
             multi_query_retrieval_service.search(
@@ -105,8 +127,15 @@ class QueryService:
             return (
                 retrieval_result,
                 [],
-                []
+                [],
+                0
             )
+
+        # --------------------------------------------------
+        # Reranker
+        # --------------------------------------------------
+
+        rerank_start = time.perf_counter()
 
         reranked_items = (
             reranker_service.rerank(
@@ -115,6 +144,24 @@ class QueryService:
                 limit=limit
             )
         )
+
+        rerank_elapsed = int(
+            (
+                time.perf_counter()
+                - rerank_start
+            ) * 1000
+        )
+
+        # --------------------------------------------------
+        # Answerability Gate候補
+        # --------------------------------------------------
+        #
+        # Gateでは通常のlimitではなく、
+        # Gate専用の候補数を使用する。
+        #
+        # ここではRerankerの結果を直接切り詰めず、
+        # Retrieval結果全体からrelaxed rerankを行う。
+        #
 
         gate_candidates = (
             reranker_service.rerank_relaxed(
@@ -126,7 +173,8 @@ class QueryService:
         return (
             retrieval_result,
             reranked_items,
-            gate_candidates
+            gate_candidates,
+            rerank_elapsed
         )
 
     # ======================================================
@@ -184,7 +232,6 @@ class QueryService:
             )
 
             if key in seen:
-
                 continue
 
             seen.add(
@@ -233,11 +280,9 @@ class QueryService:
             )
 
             if not page_reference:
-
                 continue
 
             if page_reference in pages:
-
                 continue
 
             pages.append(
@@ -255,6 +300,7 @@ class QueryService:
         *,
         analyze_elapsed_ms: int,
         retrieval_elapsed_ms: int,
+        rerank_elapsed_ms: int,
         answerability_elapsed_ms: int,
         llm_elapsed_ms: int,
         total_elapsed_ms: int,
@@ -272,6 +318,9 @@ class QueryService:
 
             "retrieval_elapsed_ms":
                 retrieval_elapsed_ms,
+
+            "rerank_elapsed_ms":
+                rerank_elapsed_ms,
 
             "answerability_elapsed_ms":
                 answerability_elapsed_ms,
@@ -425,6 +474,7 @@ class QueryService:
                 self._build_response_metadata(
                     analyze_elapsed_ms=0,
                     retrieval_elapsed_ms=0,
+                    rerank_elapsed_ms=0,
                     answerability_elapsed_ms=0,
                     llm_elapsed_ms=0,
                     total_elapsed_ms=total_elapsed,
@@ -472,6 +522,11 @@ class QueryService:
             )
         )
 
+        logger.info(
+            "Current Chapter : %s",
+            current_chapter
+        )
+
         # ==================================================
         # Off Topic
         # ==================================================
@@ -480,6 +535,11 @@ class QueryService:
             off_topic_router_service.is_off_topic(
                 normalized_question
             )
+        )
+
+        logger.info(
+            "Off Topic : %s",
+            is_off_topic
         )
 
         # ==================================================
@@ -547,7 +607,8 @@ class QueryService:
         (
             retrieval_result,
             reranked_items,
-            gate_candidates
+            gate_candidates,
+            rerank_elapsed
         ) = self._search_and_rerank(
             search_query=knowledge_query,
             collection_name=collection_name,
@@ -573,14 +634,35 @@ class QueryService:
             )
 
             (
-                retrieval_result,
-                reranked_items,
-                gate_candidates
+                fallback_result,
+                fallback_reranked_items,
+                fallback_gate_candidates,
+                fallback_rerank_elapsed
             ) = self._search_and_rerank(
                 search_query=normalized_question,
                 collection_name=collection_name,
                 current_chapter=current_chapter,
                 limit=limit
+            )
+
+            # --------------------------------------------------
+            # Fallback結果を採用
+            # --------------------------------------------------
+
+            retrieval_result = (
+                fallback_result
+            )
+
+            reranked_items = (
+                fallback_reranked_items
+            )
+
+            gate_candidates = (
+                fallback_gate_candidates
+            )
+
+            rerank_elapsed += (
+                fallback_rerank_elapsed
             )
 
         retrieval_elapsed = int(
@@ -593,6 +675,11 @@ class QueryService:
         logger.info(
             "Retrieval Time : %d ms",
             retrieval_elapsed
+        )
+
+        logger.info(
+            "Rerank Time : %d ms",
+            rerank_elapsed
         )
 
         # ==================================================
@@ -612,6 +699,7 @@ class QueryService:
                 self._build_response_metadata(
                     analyze_elapsed_ms=analyze_elapsed,
                     retrieval_elapsed_ms=retrieval_elapsed,
+                    rerank_elapsed_ms=rerank_elapsed,
                     answerability_elapsed_ms=0,
                     llm_elapsed_ms=0,
                     total_elapsed_ms=total_elapsed,
@@ -642,7 +730,11 @@ class QueryService:
         # Answerability Gate
         # ==================================================
         #
-        # boolではなく、FULL/PARTIAL/NONEの結果を保持する。
+        # boolではなく、
+        #
+        # FULL / PARTIAL / NONE
+        #
+        # の結果を保持する。
         #
         # ==================================================
 
@@ -707,6 +799,109 @@ class QueryService:
                 self._build_response_metadata(
                     analyze_elapsed_ms=analyze_elapsed,
                     retrieval_elapsed_ms=retrieval_elapsed,
+                    rerank_elapsed_ms=rerank_elapsed,
+                    answerability_elapsed_ms=(
+                        answerability_elapsed
+                    ),
+                    llm_elapsed_ms=0,
+                    total_elapsed_ms=total_elapsed,
+                    fallback_used=fallback_used,
+                    cache_hit=(
+                        retrieval_result.cache_hit
+                    ),
+                    retrieved_count=(
+                        retrieval_result.total
+                    ),
+                    gate_candidate_count=len(
+                        gate_candidates
+                    ),
+                    final_context_count=0
+                )
+            )
+
+            answer = (
+                "資料からは確認できません。"
+            )
+
+            return self._build_empty_response(
+                answer=answer,
+                metadata=metadata,
+                is_off_topic=is_off_topic,
+                response_format=response_format,
+                answerability_result=(
+                    answerability_result
+                )
+            )
+        # ==================================================
+        # Answerability Gate
+        # ==================================================
+        #
+        # boolではなく、FULL/PARTIAL/NONEの結果を保持する。
+        #
+        # FULL / PARTIALの場合はLLMへ進む。
+        # NONEの場合のみ、資料を根拠とした回答を終了する。
+        #
+
+        gate_query = (
+            normalized_question
+            if fallback_used
+            else knowledge_query
+        )
+
+        gate_start = (
+            time.perf_counter()
+        )
+
+        answerability_result = (
+            answerability_gate_service.assess(
+                question=gate_query,
+                items=gate_candidates
+            )
+        )
+
+        answerability_elapsed = int(
+            (
+                time.perf_counter()
+                - gate_start
+            ) * 1000
+        )
+
+        logger.info(
+            "Answerability Status : %s",
+            answerability_result.status.value
+        )
+
+        logger.info(
+            "Answerability Reason : %s",
+            answerability_result.reason
+        )
+
+        # ==================================================
+        # Answerability NONE
+        # ==================================================
+        #
+        # 本当にRAGに関連情報がない場合だけ、
+        # 資料を根拠とした回答を終了する。
+        #
+        # FULL / PARTIALの場合はLLMへ進む。
+        #
+
+        if (
+            answerability_result.status
+            == AnswerabilityStatus.NONE
+        ):
+
+            total_elapsed = int(
+                (
+                    time.perf_counter()
+                    - overall_start
+                ) * 1000
+            )
+
+            metadata = (
+                self._build_response_metadata(
+                    analyze_elapsed_ms=analyze_elapsed,
+                    retrieval_elapsed_ms=retrieval_elapsed,
                     answerability_elapsed_ms=(
                         answerability_elapsed
                     ),
@@ -748,17 +943,15 @@ class QueryService:
         # 実際の回答生成用候補を統合する。
         #
         # reranked_items:
-        #     通常のRerankerによる回答関連度順の候補。
+        #   通常のRerankerによる回答関連度順の候補。
         #
         # gate_candidates:
-        #     Answerability Gateが関連情報を判定するための
-        #     緩和候補。
+        #   Answerability Gateが関連情報を判定するための
+        #   緩和候補。
         #
-        # 両者を統合したうえで重複除去することで、
         # Gate用候補にしか存在しない関連情報も
-        # 回答生成に利用できる。
+        # 回答生成へ利用できるようにする。
         #
-        # ==================================================
 
         answer_context_candidates = (
             reranked_items
@@ -774,6 +967,10 @@ class QueryService:
         # ==================================================
         # Defensive Check
         # ==================================================
+        #
+        # Answerability Gateを通過しているにもかかわらず、
+        # Context統合後に利用可能なContextがなくなった場合。
+        #
 
         if not final_context_items:
 
@@ -837,6 +1034,10 @@ class QueryService:
         # ==================================================
         # Sources
         # ==================================================
+        #
+        # 回答本文とは分離した、
+        # 回答の根拠となる資料情報。
+        #
 
         sources = (
             self._build_sources(
@@ -863,17 +1064,13 @@ class QueryService:
         # Prompt
         # ==================================================
         #
-        # Answerability Gateの結果をそのまま渡す。
+        # QueryRewriteServiceで判定した
+        # response_formatをPromptBuilderへ渡す。
         #
-        # FULL
-        # PARTIAL
-        # NONE
+        # Answerability Gateの結果も渡す。
         #
-        # の判定がLLM回答へ反映される。
+        # ページ情報はRAG metadataから取得したものだけを渡す。
         #
-        # ページ情報もRAG metadataから渡す。
-        #
-        # ==================================================
 
         prompt = (
             prompt_builder.build(
@@ -985,10 +1182,12 @@ class QueryService:
         # Search Log
         # ==================================================
         #
-        # reranked_itemsには、Gate候補ではなく、
-        # 実際のRerankerによる結果を記録する。
+        # reranked_itemsには、
+        # Gate候補ではなく通常のReranker結果を記録する。
         #
-        # ==================================================
+        # 検索ログ上の「Reranker結果」と、
+        # 実際にLLMへ渡したContextは別物として扱う。
+        #
 
         search_log_service.log(
 
@@ -1012,6 +1211,12 @@ class QueryService:
                 retrieval_elapsed
             ),
 
+            # 現在のQueryServiceでは
+            # Reranker単独の処理時間を計測していない。
+            #
+            # 必要になった場合は
+            # _search_and_rerank()内で計測する。
+            #
             rerank_elapsed_ms=0,
 
             llm_elapsed_ms=(
@@ -1031,6 +1236,10 @@ class QueryService:
         # ==================================================
         # Conversation History
         # ==================================================
+        #
+        # LLMによる回答生成が正常に完了した場合のみ、
+        # 今回の質問・回答を会話履歴へ追加する。
+        #
 
         conversation_service.append(
 

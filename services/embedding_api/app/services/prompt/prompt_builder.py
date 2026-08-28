@@ -134,8 +134,7 @@ class PromptBuilder:
 資料の内容を別の表現形式へ変換して回答してください。
 """,
 
-    "QUIZ": """
-
+        "QUIZ": """
 ・資料の内容に基づいたクイズ形式で回答してください。
 ・問題と答えが分かる形式にしてください。
 ・資料にない知識を、資料に基づく問題であるかのように
@@ -143,8 +142,7 @@ class PromptBuilder:
 ・資料から確認できる範囲で問題を作成してください。
 """,
 
-    "DEBUG": """
-
+        "DEBUG": """
 ・提示されたコードやエラーの内容と、資料の内容を照らし合わせて
 原因を説明してください。
 ・資料から確認できる原因と、資料だけでは判断できない点を
@@ -154,44 +152,41 @@ class PromptBuilder:
 原因候補を整理してください。
 """,
 
-    "SUMMARY": """
-
+        "SUMMARY": """
 ・資料の内容を簡潔に要約してください。
 ・質問に関係する内容を優先してください。
 ・資料にない情報を事実として追加しないでください。
 """,
 
-    "EXAMPLE": """
-
+        "EXAMPLE": """
 ・資料の内容に基づいた具体例を挙げて回答してください。
 ・資料に具体例がない場合でも、資料の説明内容を理解するための
 サンプルを生成して構いません。
 ・生成した例を資料に掲載されていた例として扱わないでください。
 ・生成する場合も、資料から確認できる概念・仕様の範囲を維持してください。
 """
-}
+    }
 
-# ======================================================
-# Answerability別の回答方針
-# ======================================================
-#
-# FULL
-#   → 資料を根拠に通常回答
-#
-# PARTIAL
-#   → 資料にある部分を回答
-#   → 不足部分を明示
-#   → 資料をもとにした変換・生成を許可
-#
-# NONE
-#   → 資料を根拠とした回答はできない
-#
-# ======================================================
+    # ======================================================
+    # Answerability別の回答方針
+    # ======================================================
+    #
+    # FULL
+    #   → 資料を根拠に通常回答
+    #
+    # PARTIAL
+    #   → 資料にある部分を回答
+    #   → 不足部分を明示
+    #   → 資料をもとにした変換・生成を許可
+    #
+    # NONE
+    #   → 資料を根拠とした回答はできない
+    #
+    # ======================================================
 
-ANSWERABILITY_INSTRUCTIONS = {
+    ANSWERABILITY_INSTRUCTIONS = {
 
-    "FULL": """
-
+        "FULL": """
 ・資料に質問への回答に必要な情報が十分に含まれています。
 ・資料の内容を根拠として、質問に直接回答してください。
 ・質問が説明、コード、図、表、手順などの形式変換を要求している場合は、
@@ -199,8 +194,7 @@ ANSWERABILITY_INSTRUCTIONS = {
 ・不要な推測や一般論を追加しないでください。
 """,
 
-    "PARTIAL": """
-
+        "PARTIAL": """
 ・資料には質問に関連する有用な情報があります。
 ・質問のすべての条件・要求が資料に記載されているとは限りません。
 ・まず、資料から確認できる情報を具体的に回答してください。
@@ -233,8 +227,7 @@ ANSWERABILITY_INSTRUCTIONS = {
 ・資料から答えられる部分を必ず先に回答してください。
 """,
 
-    "NONE": """
-
+        "NONE": """
 ・RAG資料には、質問に対する有用な根拠が確認できません。
 ・資料に存在しない内容を、資料から得た情報であるかのように
 回答してはいけません。
@@ -244,248 +237,248 @@ ANSWERABILITY_INSTRUCTIONS = {
 ・資料に単に回答形式そのものが存在しないだけで、
 関連する知識やコードが存在する場合はNONEとして扱わないでください。
 """
-}
+    }
 
-DEFAULT_ANSWERABILITY = "FULL"
+    DEFAULT_ANSWERABILITY = "FULL"
 
-# ======================================================
-# Prompt生成
-# ======================================================
+    # ======================================================
+    # Prompt生成
+    # ======================================================
 
-def build(
-    self,
-    question: str,
-    contexts: list[str],
-    conversation_questions: list[dict] | None = None,
-    is_off_topic: bool = False,
-    response_format: str = "EXPLAIN",
-    conversation_turns: list[dict] | None = None,
-    answerability_status: str = "FULL",
-    answerability_reason: str = "",
-    source_pages: list[str] | None = None
-) -> str:
+    def build(
+        self,
+        question: str,
+        contexts: list[str],
+        conversation_questions: list[dict] | None = None,
+        is_off_topic: bool = False,
+        response_format: str = "EXPLAIN",
+        conversation_turns: list[dict] | None = None,
+        answerability_status: str = "FULL",
+        answerability_reason: str = "",
+        source_pages: list[str] | None = None
+    ) -> str:
 
-    logger.debug(
-        "Prompt created"
-    )
+        logger.debug(
+            "Prompt created"
+        )
 
-    # --------------------------------------------------
-    # 後方互換
-    # --------------------------------------------------
+        # --------------------------------------------------
+        # 後方互換
+        # --------------------------------------------------
 
-    if conversation_questions is None:
+        if conversation_questions is None:
 
-        conversation_questions = (
-            self._extract_questions(
-                conversation_turns
+            conversation_questions = (
+                self._extract_questions(
+                    conversation_turns
+                )
+            )
+
+        # --------------------------------------------------
+        # 正規化
+        # --------------------------------------------------
+
+        response_format = (
+            self._normalize_response_format(
+                response_format
             )
         )
 
-    # --------------------------------------------------
-    # 正規化
-    # --------------------------------------------------
+        answerability_status = (
+            self._normalize_answerability_status(
+                answerability_status
+            )
+        )
 
-    response_format = (
-        self._normalize_response_format(
+        if source_pages is None:
+
+            source_pages = []
+
+        prompt = self._build_internal(
+
+            question=question,
+
+            contexts=contexts,
+
+            conversation_questions=
+                conversation_questions,
+
+            is_off_topic=
+                is_off_topic,
+
+            response_format=
+                response_format,
+
+            answerability_status=
+                answerability_status,
+
+            answerability_reason=
+                answerability_reason,
+
+            source_pages=
+                source_pages
+        )
+
+        if settings.log_prompt:
+
+            logger.debug(
+                "Prompt\n%s",
+                prompt
+            )
+
+        return prompt
+
+    # ======================================================
+    # response_format正規化
+    # ======================================================
+
+    def _normalize_response_format(
+        self,
+        response_format: str
+    ) -> str:
+
+        value = str(
+            response_format or ""
+        ).strip().upper()
+
+        if value in self.FORMAT_INSTRUCTIONS:
+
+            return value
+
+        logger.warning(
+            "Unknown response_format=%s. "
+            "Using EXPLAIN.",
             response_format
         )
-    )
 
-    answerability_status = (
-        self._normalize_answerability_status(
-            answerability_status
-        )
-    )
+        return "EXPLAIN"
 
-    if source_pages is None:
+    # ======================================================
+    # Answerability正規化
+    # ======================================================
 
-        source_pages = []
+    def _normalize_answerability_status(
+        self,
+        status: str
+    ) -> str:
 
-    prompt = self._build_internal(
+        value = str(
+            status or ""
+        ).strip().upper()
 
-        question=question,
+        if value in (
+            "FULL",
+            "PARTIAL",
+            "NONE"
+        ):
 
-        contexts=contexts,
+            return value
 
-        conversation_questions=
-            conversation_questions,
-
-        is_off_topic=
-            is_off_topic,
-
-        response_format=
-            response_format,
-
-        answerability_status=
-            answerability_status,
-
-        answerability_reason=
-            answerability_reason,
-
-        source_pages=
-            source_pages
-    )
-
-    if settings.log_prompt:
-
-        logger.debug(
-            "Prompt\n%s",
-            prompt
+        logger.warning(
+            "Unknown answerability_status=%s. "
+            "Using %s.",
+            status,
+            self.DEFAULT_ANSWERABILITY
         )
 
-    return prompt
+        return self.DEFAULT_ANSWERABILITY
 
-# ======================================================
-# response_format正規化
-# ======================================================
+    # ======================================================
+    # 会話履歴から質問だけを抽出
+    # ======================================================
 
-def _normalize_response_format(
-    self,
-    response_format: str
-) -> str:
+    def _extract_questions(
+        self,
+        conversation_turns: list[dict] | None
+    ) -> list[dict]:
 
-    value = str(
-        response_format or ""
-    ).strip().upper()
+        if not conversation_turns:
 
-    if value in self.FORMAT_INSTRUCTIONS:
+            return []
 
-        return value
+        questions = []
 
-    logger.warning(
-        "Unknown response_format=%s. "
-        "Using EXPLAIN.",
-        response_format
-    )
+        for turn in conversation_turns:
 
-    return "EXPLAIN"
+            role = turn.get(
+                "role",
+                ""
+            )
 
-# ======================================================
-# Answerability正規化
-# ======================================================
+            if role != "user":
 
-def _normalize_answerability_status(
-    self,
-    status: str
-) -> str:
+                continue
 
-    value = str(
-        status or ""
-    ).strip().upper()
+            content = turn.get(
+                "content",
+                ""
+            )
 
-    if value in (
-        "FULL",
-        "PARTIAL",
-        "NONE"
-    ):
+            if not content:
 
-        return value
+                continue
 
-    logger.warning(
-        "Unknown answerability_status=%s. "
-        "Using %s.",
-        status,
-        self.DEFAULT_ANSWERABILITY
-    )
+            questions.append(
+                {
+                    "role":
+                        "user",
 
-    return self.DEFAULT_ANSWERABILITY
+                    "content":
+                        content,
 
-# ======================================================
-# 会話履歴から質問だけを抽出
-# ======================================================
+                    "is_off_topic":
+                        turn.get(
+                            "is_off_topic",
+                            False
+                        )
+                }
+            )
 
-def _extract_questions(
-    self,
-    conversation_turns: list[dict] | None
-) -> list[dict]:
+        return questions
 
-    if not conversation_turns:
+    # ======================================================
+    # 会話文脈
+    # ======================================================
+    #
+    # assistantの過去回答は入れない。
+    #
+    # ======================================================
 
-        return []
+    def _format_conversation_context(
+        self,
+        conversation_questions: list[dict] | None
+    ) -> str:
 
-    questions = []
+        if not conversation_questions:
 
-    for turn in conversation_turns:
+            return ""
 
-        role = turn.get(
-            "role",
-            ""
+        lines = []
+
+        for turn in conversation_questions:
+
+            content = turn.get(
+                "content",
+                ""
+            )
+
+            if not content:
+
+                continue
+
+            lines.append(
+                f"受講生: {content}"
+            )
+
+        if not lines:
+
+            return ""
+
+        history_text = "\n".join(
+            lines
         )
 
-        if role != "user":
-
-            continue
-
-        content = turn.get(
-            "content",
-            ""
-        )
-
-        if not content:
-
-            continue
-
-        questions.append(
-            {
-                "role":
-                    "user",
-
-                "content":
-                    content,
-
-                "is_off_topic":
-                    turn.get(
-                        "is_off_topic",
-                        False
-                    )
-            }
-        )
-
-    return questions
-
-# ======================================================
-# 会話文脈
-# ======================================================
-#
-# assistantの過去回答は入れない。
-#
-# ======================================================
-
-def _format_conversation_context(
-    self,
-    conversation_questions: list[dict] | None
-) -> str:
-
-    if not conversation_questions:
-
-        return ""
-
-    lines = []
-
-    for turn in conversation_questions:
-
-        content = turn.get(
-            "content",
-            ""
-        )
-
-        if not content:
-
-            continue
-
-        lines.append(
-            f"受講生: {content}"
-        )
-
-    if not lines:
-
-        return ""
-
-    history_text = "\n".join(
-        lines
-    )
-
-    return f"""
+        return f"""
 会話の文脈
 
 以下は、今回の質問の意味を理解するための
@@ -499,18 +492,18 @@ def _format_conversation_context(
 {history_text}
 """
 
-# ======================================================
-# ページ情報
-# ======================================================
+    # ======================================================
+    # ページ情報
+    # ======================================================
 
-def _format_source_pages(
-    self,
-    source_pages: list[str] | None
-) -> str:
+    def _format_source_pages(
+        self,
+        source_pages: list[str] | None
+    ) -> str:
 
-    if not source_pages:
+        if not source_pages:
 
-        return """
+            return """
 
 参考ページ情報：
 なし
@@ -518,41 +511,41 @@ def _format_source_pages(
 ページ番号を推測してはいけません。
 """
 
-    unique_pages = []
+        unique_pages = []
 
-    for page in source_pages:
+        for page in source_pages:
 
-        value = str(
-            page
-        ).strip()
+            value = str(
+                page
+            ).strip()
 
-        if not value:
+            if not value:
 
-            continue
+                continue
 
-        if value in unique_pages:
+            if value in unique_pages:
 
-            continue
+                continue
 
-        unique_pages.append(
-            value
+            unique_pages.append(
+                value
+            )
+
+        if not unique_pages:
+
+            return """
+
+参考ページ情報：
+なし
+
+ページ番号を推測してはいけません。
+"""
+
+        page_text = "、".join(
+            unique_pages
         )
 
-    if not unique_pages:
-
-        return """
-
-参考ページ情報：
-なし
-
-ページ番号を推測してはいけません。
-"""
-
-    page_text = "、".join(
-        unique_pages
-    )
-
-    return f"""
+        return f"""
 
 参考ページ情報：
 
@@ -566,37 +559,37 @@ def _format_source_pages(
 上記の情報だけを使用してください。
 """
 
-# ======================================================
-# Context整形
-# ======================================================
+    # ======================================================
+    # Context整形
+    # ======================================================
 
-def _format_contexts(
-    self,
-    contexts: list[str]
-) -> str:
+    def _format_contexts(
+        self,
+        contexts: list[str]
+    ) -> str:
 
-    if not contexts:
+        if not contexts:
 
-        return "資料なし"
+            return "資料なし"
 
-    return "\n\n".join(
-        contexts
-    )
+        return "\n\n".join(
+            contexts
+        )
 
-# ======================================================
-# 範囲外質問
-# ======================================================
+    # ======================================================
+    # 範囲外質問
+    # ======================================================
 
-def _build_off_topic_instruction(
-    self,
-    is_off_topic: bool
-) -> str:
+    def _build_off_topic_instruction(
+        self,
+        is_off_topic: bool
+    ) -> str:
 
-    if not is_off_topic:
+        if not is_off_topic:
 
-        return ""
+            return ""
 
-    return """
+        return """
 
 ・この質問はJava研修教材の主要範囲外である可能性があります。
 
@@ -613,22 +606,22 @@ RAG資料に関連情報が存在する場合は回答対象としてくださ�
 資料から確認できない旨を明示してください。
 """
 
-# ======================================================
-# 回答変換に関する共通ルール
-# ======================================================
-#
-# 今回の改善で特に重要な部分。
-#
-# 「資料に書いてある形式」と
-# 「受講生が要求した形式」を分離する。
-#
-# ======================================================
+    # ======================================================
+    # 回答変換に関する共通ルール
+    # ======================================================
+    #
+    # 今回の改善で特に重要な部分。
+    #
+    # 「資料に書いてある形式」と
+    # 「受講生が要求した形式」を分離する。
+    #
+    # ======================================================
 
-def _build_transformation_instruction(
-    self
-) -> str:
+    def _build_transformation_instruction(
+        self
+    ) -> str:
 
-    return """
+        return """
 資料から回答形式への変換
 
 RAG資料の表現形式と、受講生が要求している回答形式は
@@ -683,18 +676,18 @@ Mermaidフローチャートとして表現
 は行ってはいけません。
 """
 
-# ======================================================
-# 回答構造
-# ======================================================
+    # ======================================================
+    # 回答構造
+    # ======================================================
 
-def _build_answer_structure_instruction(
-    self,
-    response_format: str
-) -> str:
+    def _build_answer_structure_instruction(
+        self,
+        response_format: str
+    ) -> str:
 
-    if response_format == "DIAGRAM":
+        if response_format == "DIAGRAM":
 
-        return """
+            return """
 今回の回答構造
 
 図を要求されている場合は、次の構造を基本としてください。
@@ -709,9 +702,9 @@ Mermaidによる図
 不要な説明を増やしすぎないでください。
 """
 
-    if response_format == "CODE":
+        if response_format == "CODE":
 
-        return """
+            return """
 今回の回答構造
 
 コードを要求されている場合は、必要に応じて、
@@ -723,9 +716,9 @@ Mermaidによる図
 の順に整理してください。
 """
 
-    if response_format == "STEP_BY_STEP":
+        if response_format == "STEP_BY_STEP":
 
-        return """
+            return """
 今回の回答構造
 
 手順を要求されている場合は、
@@ -737,80 +730,80 @@ Mermaidによる図
 のように、処理順序が明確になるよう整理してください。
 """
 
-    return """
+        return """
 今回の回答構造
 
 質問に直接答え、
 必要な情報を分かりやすい順序で整理してください。
 """
 
-# ======================================================
-# 最終Prompt
-# ======================================================
+    # ======================================================
+    # 最終Prompt
+    # ======================================================
 
-def _build_internal(
-    self,
-    question: str,
-    contexts: list[str],
-    conversation_questions: list[dict] | None,
-    is_off_topic: bool,
-    response_format: str,
-    answerability_status: str,
-    answerability_reason: str,
-    source_pages: list[str]
-) -> str:
+    def _build_internal(
+        self,
+        question: str,
+        contexts: list[str],
+        conversation_questions: list[dict] | None,
+        is_off_topic: bool,
+        response_format: str,
+        answerability_status: str,
+        answerability_reason: str,
+        source_pages: list[str]
+    ) -> str:
 
-    context = self._format_contexts(
-        contexts
-    )
-
-    history_section = (
-        self._format_conversation_context(
-            conversation_questions
+        context = self._format_contexts(
+            contexts
         )
-    )
 
-    source_page_section = (
-        self._format_source_pages(
-            source_pages
+        history_section = (
+            self._format_conversation_context(
+                conversation_questions
+            )
         )
-    )
 
-    format_instruction = (
-        self.FORMAT_INSTRUCTIONS.get(
-            response_format,
-            self.FORMAT_INSTRUCTIONS[
-                "EXPLAIN"
-            ]
+        source_page_section = (
+            self._format_source_pages(
+                source_pages
+            )
         )
-    )
 
-    answerability_instruction = (
-        self.ANSWERABILITY_INSTRUCTIONS.get(
-            answerability_status,
-            self.ANSWERABILITY_INSTRUCTIONS[
-                self.DEFAULT_ANSWERABILITY
-            ]
+        format_instruction = (
+            self.FORMAT_INSTRUCTIONS.get(
+                response_format,
+                self.FORMAT_INSTRUCTIONS[
+                    "EXPLAIN"
+                ]
+            )
         )
-    )
 
-    off_topic_instruction = (
-        self._build_off_topic_instruction(
-            is_off_topic
+        answerability_instruction = (
+            self.ANSWERABILITY_INSTRUCTIONS.get(
+                answerability_status,
+                self.ANSWERABILITY_INSTRUCTIONS[
+                    self.DEFAULT_ANSWERABILITY
+                ]
+            )
         )
-    )
 
-    transformation_instruction = (
-        self._build_transformation_instruction()
-    )
-
-    answer_structure_instruction = (
-        self._build_answer_structure_instruction(
-            response_format
+        off_topic_instruction = (
+            self._build_off_topic_instruction(
+                is_off_topic
+            )
         )
-    )
 
-    return f"""
+        transformation_instruction = (
+            self._build_transformation_instruction()
+        )
+
+        answer_structure_instruction = (
+            self._build_answer_structure_instruction(
+                response_format
+            )
+        )
+
+        return f"""
 
 あなたはJava研修受講生向けのAI学習アシスタントです。
 
@@ -1051,5 +1044,6 @@ RAG資料に関連情報が存在するなら、
 
 日本語で回答してください。
 """
+
 
 prompt_builder = PromptBuilder()

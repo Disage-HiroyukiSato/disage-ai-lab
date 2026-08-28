@@ -4,10 +4,10 @@ import time
 from app.models.retrieval_item import RetrievalItem
 from app.models.retrieval_result import RetrievalResult
 
-from app.services.query_expansion_service import (
+from app.services.query_processing.query_expansion_service import (
     query_expansion_service
 )
-from app.services.retrieval_service import (
+from app.services.retrieval.retrieval_service import (
     retrieval_service
 )
 

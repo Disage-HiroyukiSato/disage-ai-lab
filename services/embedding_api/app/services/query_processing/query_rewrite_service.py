@@ -2,7 +2,7 @@ import json
 import logging
 import re
 
-from app.services.llm_service import llm_service
+from app.services.infra.llm_service import llm_service
 
 
 logger = logging.getLogger(__name__)

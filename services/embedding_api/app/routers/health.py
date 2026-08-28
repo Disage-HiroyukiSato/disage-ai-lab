@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi import HTTPException
 
-from app.services.chroma_service import chroma_service
+from app.services.infra.chroma_service import chroma_service
 
 router = APIRouter(
 

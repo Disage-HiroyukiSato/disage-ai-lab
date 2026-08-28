@@ -8,11 +8,11 @@ from pydantic import Field
 
 from app.config import settings
 
-from app.services.embedding_service import (
+from app.services.ingestion.embedding_service import (
     embedding_service
 )
 
-from app.services.cache_service import (
+from app.services.infra.cache_service import (
     cache_service
 )
 

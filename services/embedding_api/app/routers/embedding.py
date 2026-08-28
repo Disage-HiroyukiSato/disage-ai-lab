@@ -3,7 +3,7 @@ from fastapi import HTTPException
 
 from pydantic import BaseModel
 
-from app.services.embedding_service import embedding_service
+from app.services.ingestion.embedding_service import embedding_service
 
 
 router = APIRouter(

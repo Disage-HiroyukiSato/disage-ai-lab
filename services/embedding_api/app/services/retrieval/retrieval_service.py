@@ -6,11 +6,11 @@ from app.config import settings
 from app.models.retrieval_item import RetrievalItem
 from app.models.retrieval_result import RetrievalResult
 
-from app.services.embedding_service import embedding_service
-from app.services.chroma_service import chroma_service
-from app.services.bm25_service import get_bm25_service
-from app.services.cache_service import cache_service
-from app.services.collection_router_service import (
+from app.services.ingestion.embedding_service import embedding_service
+from app.services.infra.chroma_service import chroma_service
+from app.services.retrieval.bm25_service import get_bm25_service
+from app.services.infra.cache_service import cache_service
+from app.services.query_processing.collection_router_service import (
     collection_router_service
 )
 

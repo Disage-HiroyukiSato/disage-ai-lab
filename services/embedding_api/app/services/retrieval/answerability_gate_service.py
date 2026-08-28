@@ -9,7 +9,7 @@ from app.models.retrieval_item import (
     RetrievalItem
 )
 
-from app.services.llm_service import (
+from app.services.infra.llm_service import (
     llm_service
 )
 

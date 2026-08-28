@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.models.retrieval_request import RetrievalRequest
-from app.services.retrieval_service import retrieval_service
+from app.services.retrieval.retrieval_service import retrieval_service
 
 router = APIRouter(
 

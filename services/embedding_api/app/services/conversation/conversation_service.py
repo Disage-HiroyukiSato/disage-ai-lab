@@ -1,7 +1,7 @@
 import logging
 
 from app.config import settings
-from app.services.db_service import db_service
+from app.services.infra.db_service import db_service
 
 logger = logging.getLogger(__name__)
 

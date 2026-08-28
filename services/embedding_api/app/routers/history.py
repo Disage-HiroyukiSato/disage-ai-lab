@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from fastapi import HTTPException
 from fastapi import Query
 
-from app.services.conversation_service import conversation_service
+from app.services.conversation.conversation_service import conversation_service
 
 
 router = APIRouter(

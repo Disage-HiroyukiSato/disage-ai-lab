@@ -8,55 +8,55 @@ from app.models.answerability import (
     AnswerabilityStatus
 )
 
-from app.services.answerability_gate_service import (
+from app.services.retrieval.answerability_gate_service import (
     answerability_gate_service
 )
 
-from app.services.collection_router_service import (
+from app.services.query_processing.collection_router_service import (
     collection_router_service
 )
 
-from app.services.context_dedup_service import (
+from app.services.retrieval.context_dedup_service import (
     context_dedup_service
 )
 
-from app.services.conversation_service import (
+from app.services.conversation.conversation_service import (
     conversation_service
 )
 
-from app.services.llm_service import (
+from app.services.infra.llm_service import (
     llm_service
 )
 
-from app.services.multi_query_retrieval_service import (
+from app.services.retrieval.multi_query_retrieval_service import (
     multi_query_retrieval_service
 )
 
-from app.services.off_topic_router_service import (
+from app.services.query_processing.off_topic_router_service import (
     off_topic_router_service
 )
 
-from app.services.progress_service import (
+from app.services.conversation.progress_service import (
     progress_service
 )
 
-from app.services.prompt_builder import (
+from app.services.prompt.prompt_builder import (
     prompt_builder
 )
 
-from app.services.query_normalizer import (
+from app.services.query_processing.query_normalizer import (
     query_normalizer
 )
 
-from app.services.query_rewrite_service import (
+from app.services.query_processing.query_rewrite_service import (
     query_rewrite_service
 )
 
-from app.services.reranker_service import (
+from app.services.retrieval.reranker_service import (
     reranker_service
 )
 
-from app.services.search_log_service import (
+from app.services.observability.search_log_service import (
     search_log_service
 )
 
@@ -730,11 +730,15 @@ class QueryService:
         # Answerability Gate
         # ==================================================
         #
-        # boolではなく、
+        # boolではなく、FULL / PARTIAL / NONEの結果を保持する。
         #
-        # FULL / PARTIAL / NONE
+        # FULL / PARTIALの場合はLLMへ進む。
+        # NONEの場合のみ、資料を根拠とした回答を終了する。
         #
-        # の結果を保持する。
+        # 注意：
+        # 以前のバージョンではこのブロックが2回連続で
+        # 重複記述されていたが（コピー時の貼り付けミス）、
+        # 実害はなかったものの保守性を損なうため1回に統合した。
         #
         # ==================================================
 
@@ -832,108 +836,6 @@ class QueryService:
                     answerability_result
                 )
             )
-        # ==================================================
-        # Answerability Gate
-        # ==================================================
-        #
-        # boolではなく、FULL/PARTIAL/NONEの結果を保持する。
-        #
-        # FULL / PARTIALの場合はLLMへ進む。
-        # NONEの場合のみ、資料を根拠とした回答を終了する。
-        #
-
-        gate_query = (
-            normalized_question
-            if fallback_used
-            else knowledge_query
-        )
-
-        gate_start = (
-            time.perf_counter()
-        )
-
-        answerability_result = (
-            answerability_gate_service.assess(
-                question=gate_query,
-                items=gate_candidates
-            )
-        )
-
-        answerability_elapsed = int(
-            (
-                time.perf_counter()
-                - gate_start
-            ) * 1000
-        )
-
-        logger.info(
-            "Answerability Status : %s",
-            answerability_result.status.value
-        )
-
-        logger.info(
-            "Answerability Reason : %s",
-            answerability_result.reason
-        )
-
-        # ==================================================
-        # Answerability NONE
-        # ==================================================
-        #
-        # 本当にRAGに関連情報がない場合だけ、
-        # 資料を根拠とした回答を終了する。
-        #
-        # FULL / PARTIALの場合はLLMへ進む。
-        #
-
-        if (
-            answerability_result.status
-            == AnswerabilityStatus.NONE
-        ):
-
-            total_elapsed = int(
-                (
-                    time.perf_counter()
-                    - overall_start
-                ) * 1000
-            )
-
-            metadata = (
-                self._build_response_metadata(
-                    analyze_elapsed_ms=analyze_elapsed,
-                    retrieval_elapsed_ms=retrieval_elapsed,
-                    answerability_elapsed_ms=(
-                        answerability_elapsed
-                    ),
-                    llm_elapsed_ms=0,
-                    total_elapsed_ms=total_elapsed,
-                    fallback_used=fallback_used,
-                    cache_hit=(
-                        retrieval_result.cache_hit
-                    ),
-                    retrieved_count=(
-                        retrieval_result.total
-                    ),
-                    gate_candidate_count=len(
-                        gate_candidates
-                    ),
-                    final_context_count=0
-                )
-            )
-
-            answer = (
-                "資料からは確認できません。"
-            )
-
-            return self._build_empty_response(
-                answer=answer,
-                metadata=metadata,
-                is_off_topic=is_off_topic,
-                response_format=response_format,
-                answerability_result=(
-                    answerability_result
-                )
-            )
 
         # ==================================================
         # Answer Context
@@ -985,6 +887,7 @@ class QueryService:
                 self._build_response_metadata(
                     analyze_elapsed_ms=analyze_elapsed,
                     retrieval_elapsed_ms=retrieval_elapsed,
+                    rerank_elapsed_ms=rerank_elapsed,
                     answerability_elapsed_ms=(
                         answerability_elapsed
                     ),
@@ -1143,6 +1046,10 @@ class QueryService:
                     retrieval_elapsed
                 ),
 
+                rerank_elapsed_ms=(
+                    rerank_elapsed
+                ),
+
                 answerability_elapsed_ms=(
                     answerability_elapsed
                 ),
@@ -1211,13 +1118,9 @@ class QueryService:
                 retrieval_elapsed
             ),
 
-            # 現在のQueryServiceでは
-            # Reranker単独の処理時間を計測していない。
-            #
-            # 必要になった場合は
-            # _search_and_rerank()内で計測する。
-            #
-            rerank_elapsed_ms=0,
+            rerank_elapsed_ms=(
+                rerank_elapsed
+            ),
 
             llm_elapsed_ms=(
                 llm_elapsed

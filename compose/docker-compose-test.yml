@@ -20,7 +20,7 @@ services:
 
     volumes:
       - ../config:/app/config:ro
-      - ../tests:/app/tests:ro
+      - ../services/embedding_api/tests:/app/tests:ro
       - ../models:/models:ro
 
     depends_on:

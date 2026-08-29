@@ -255,7 +255,8 @@ class PromptBuilder:
         conversation_turns: list[dict] | None = None,
         answerability_status: str = "FULL",
         answerability_reason: str = "",
-        source_pages: list[str] | None = None
+        source_pages: list[str] | None = None,
+        learning_response_instruction: str = ""
     ) -> str:
 
         logger.debug(
@@ -316,7 +317,9 @@ class PromptBuilder:
                 answerability_reason,
 
             source_pages=
-                source_pages
+                source_pages,
+                
+            learning_response_instruction=learning_response_instruction,
         )
 
         if settings.log_prompt:
@@ -750,7 +753,8 @@ Mermaidによる図
         response_format: str,
         answerability_status: str,
         answerability_reason: str,
-        source_pages: list[str]
+        source_pages: list[str],
+        learning_response_instruction: str
     ) -> str:
 
         context = self._format_contexts(
@@ -801,6 +805,10 @@ Mermaidによる図
             self._build_answer_structure_instruction(
                 response_format
             )
+        )
+
+        learning_response_instruction = (
+            learning_response_instruction.strip()
         )
 
         return f"""
@@ -999,6 +1007,10 @@ RAG資料に関連情報が存在するなら、
 範囲外判定について
 
 {off_topic_instruction}
+
+学習者向け回答方針
+
+{learning_response_instruction}
 
 回答スタイル
 

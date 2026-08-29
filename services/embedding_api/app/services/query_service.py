@@ -60,6 +60,13 @@ from app.services.observability.search_log_service import (
     search_log_service
 )
 
+from app.services.learning.learning_response_controller import (
+    learning_response_controller
+)
+
+from app.services.learning.learning_follow_up_service import (
+    LearningFollowUpService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -963,6 +970,20 @@ class QueryService:
             source_pages
         )
 
+        learning_response_policy = learning_response_controller.decide(
+            question=question,
+            answerability_status=answerability_result.status.value,
+            response_format=response_format,
+        )
+
+        learning_response_instruction = (
+            learning_response_controller.build_instruction(
+                learning_response_policy
+            )
+        )
+
+        self.learning_follow_up_service = LearningFollowUpService()
+
         # ==================================================
         # Prompt
         # ==================================================
@@ -998,7 +1019,9 @@ class QueryService:
                     answerability_result.reason
                 ),
 
-                source_pages=source_pages
+                source_pages=source_pages,
+
+                learning_response_instruction=learning_response_instruction
 
             )
         )
@@ -1136,6 +1159,12 @@ class QueryService:
 
         )
 
+        follow_ups = self.learning_follow_up_service.generate(
+            question=question,
+            answer=answer,
+            contexts=contexts,
+        )
+        
         # ==================================================
         # Conversation History
         # ==================================================

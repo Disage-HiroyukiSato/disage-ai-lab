@@ -1,5 +1,8 @@
 from app.models.learning.follow_up import FollowUp
-from app.services.retrieval.retrieval_service import RetrievalService
+
+from app.services.retrieval.multi_query_retrieval_service import (
+    MultiQueryRetrievalService,
+)
 
 
 class FollowUpValidationService:
@@ -8,7 +11,7 @@ class FollowUpValidationService:
 
     def __init__(
         self,
-        retrieval_service: RetrievalService,
+        retrieval_service: MultiQueryRetrievalService,
     ):
         self.retrieval_service = retrieval_service
 

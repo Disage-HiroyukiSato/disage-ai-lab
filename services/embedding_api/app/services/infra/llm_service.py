@@ -1,7 +1,9 @@
 import requests
+import logging
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 
 class LlmService:
 
@@ -50,6 +52,37 @@ class LlmService:
                 str(ex)
 
             )
+
+        response = requests.post(
+            f"{settings.llm_rewriter_url}/completion",
+            json={
+                "prompt": prompt,
+                "n_predict": 128,
+                "temperature": 0.1,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1,
+                "stop": [
+                    "</s>",
+                    "<|im_end|>"
+                ]
+            },
+            timeout=settings.llm_rewriter_timeout
+        )
+
+        logger.info(
+            "LLM Rewriter Status : %d",
+            response.status_code
+        )
+
+        logger.info(
+            "LLM Rewriter Response : %s",
+            response.text[:1000]
+        )
+
+        logger.info(
+            "LLM Rewriter URL : %s",
+            settings.llm_rewriter_url
+        )
 
         response.raise_for_status()
 

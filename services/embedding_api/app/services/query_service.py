@@ -89,7 +89,7 @@ class QueryService:
     def __init__(self):
 
         self.learning_follow_up_service = LearningFollowUpService(
-            retrieval_service=self.retrieval_service,
+            retrieval_service=multi_query_retrieval_service,
         )
 
     # ======================================================

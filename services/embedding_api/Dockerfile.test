@@ -6,9 +6,9 @@ ENV PYTHONPATH=/app
 
 WORKDIR /app
 
-COPY services/embedding_api/requirements.txt .
+COPY services/embedding_api/requirements-test.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-test.txt
 
 COPY services/embedding_api/app ./app
 COPY services/embedding_api/tests ./tests

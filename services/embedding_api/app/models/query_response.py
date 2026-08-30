@@ -12,6 +12,10 @@ from app.models.query_source_response import (
     QuerySourceResponse
 )
 
+from app.models.learning.follow_up import (
+    FollowUp
+)
+
 
 class QueryResponse(BaseModel):
 
@@ -125,6 +129,24 @@ class QueryResponse(BaseModel):
     # ======================================================
 
     answerability_reason: str = ""
+
+    # ======================================================
+    # Follow-up Questions
+    # ======================================================
+    #
+    # 次に学ぶと理解しやすい概念の提示。
+    #
+    # LearningFollowUpServiceが、今回の質問・回答・
+    # 根拠資料から生成した関連質問のリスト。
+    #
+    # 資料が存在しない・回答不能だった場合は
+    # 空リストとなる。
+    #
+    # ======================================================
+
+    follow_ups: list[FollowUp] = Field(
+        default_factory=list
+    )
 
     # ======================================================
     # システム情報

@@ -16,6 +16,7 @@
  * ・参照ページ表示
  * ・要点表示
  * ・関連教材表示
+ * ・Follow-up Questions表示（次に学ぶと理解しやすい概念）
  * ・システム情報表示
  * ・Markdown / Mermaid表示
  *
@@ -107,6 +108,8 @@ function appendLocalHistory(question, answer, answerabilityStatus, response) {
       : [],
 
     documents: Array.isArray(response.documents) ? response.documents : [],
+
+    follow_ups: Array.isArray(response.follow_ups) ? response.follow_ups : [],
 
     metadata: response.metadata || {},
 
@@ -524,6 +527,113 @@ function renderRelatedMaterials(materials) {
 }
 
 /* ============================================================
+ * Follow-up Questions
+ * ============================================================
+ *
+ * 「次に学ぶと理解しやすい概念」の表示。
+ *
+ * APIレスポンスのfollow_upsは
+ *
+ *     [{ question: "...", reason: "..." }, ...]
+ *
+ * の形式（FollowUpモデルに準拠）。
+ *
+ * クリックすると、その質問をそのまま入力欄へ設定し
+ * 送信できるようにする（再質問の手間を減らす）。
+ *
+ * ============================================================
+ */
+
+function renderFollowUps(followUps) {
+  const section = document.getElementById("followUpsSection");
+
+  const container = document.getElementById("followUps");
+
+  if (!section || !container) {
+    return;
+  }
+
+  container.innerHTML = "";
+
+  if (!Array.isArray(followUps) || followUps.length === 0) {
+    section.hidden = true;
+
+    return;
+  }
+
+  section.hidden = false;
+
+  followUps.forEach(function (followUp) {
+    if (!followUp) {
+      return;
+    }
+
+    const question =
+      typeof followUp === "string" ? followUp : followUp.question || "";
+
+    const reason = typeof followUp === "string" ? "" : followUp.reason || "";
+
+    if (!question) {
+      return;
+    }
+
+    const button = document.createElement("button");
+
+    button.type = "button";
+
+    button.className = "follow-up-item";
+
+    button.innerHTML = `
+
+            <span class="follow-up-question">
+                ${escapeHtml(question)}
+            </span>
+
+            ${
+              reason
+                ? `
+                        <span class="follow-up-reason">
+                            ${escapeHtml(reason)}
+                        </span>
+                    `
+                : ""
+            }
+
+        `;
+
+    button.addEventListener("click", function () {
+      askFollowUpQuestion(question);
+    });
+
+    container.appendChild(button);
+  });
+}
+
+/* ============================================================
+ * Follow-up Question Click
+ * ============================================================
+ *
+ * Follow-upカードをクリックした際、
+ * 入力欄へ質問文をセットしてそのまま送信する。
+ *
+ * ============================================================
+ */
+
+function askFollowUpQuestion(question) {
+  const questionElement = document.getElementById("question");
+
+  if (!questionElement) {
+    return;
+  }
+
+  questionElement.value = question;
+
+  updateQuestionInputStatus();
+
+  askQuestion();
+}
+
+/* ============================================================
  * Metadata
  * ============================================================
  *
@@ -604,6 +714,8 @@ function clearAnswer() {
   renderKeyPoints([]);
 
   renderRelatedMaterials([]);
+
+  renderFollowUps([]);
 
   renderMetadata({});
 
@@ -859,6 +971,8 @@ function selectHistoryItem(index) {
   renderSourcePages(turn.source_pages || []);
 
   renderDocuments(turn.documents || []);
+
+  renderFollowUps(turn.follow_ups || []);
 
   renderMetadata(turn.metadata || {});
 }
@@ -1254,6 +1368,15 @@ async function askQuestion() {
     renderRelatedMaterials(
       Array.isArray(json.related_materials) ? json.related_materials : [],
     );
+
+    /* --------------------------------------------
+     * Follow-up Questions
+     *
+     * 次に学ぶと理解しやすい概念。
+     * --------------------------------------------
+     */
+
+    renderFollowUps(Array.isArray(json.follow_ups) ? json.follow_ups : []);
 
     /* --------------------------------------------
      * Metadata

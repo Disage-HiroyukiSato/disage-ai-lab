@@ -20,6 +20,10 @@ from app.models.query_metadata_response import (
     QueryMetadataResponse
 )
 
+from app.models.learning.follow_up import (
+    FollowUp
+)
+
 from app.services.query_service import (
     query_service
 )
@@ -313,6 +317,60 @@ async def query(
     )
 
     # ======================================================
+    # Follow-up Questions
+    # ======================================================
+    #
+    # 次に学ぶと理解しやすい概念の提示。
+    #
+    # QueryServiceがLearningFollowUpServiceで生成した
+    # FollowUpオブジェクトのリストをそのまま受け取る。
+    #
+    # QueryServiceは既に FollowUp（pydanticモデル）の
+    # リストを返しているため、Router側で値の再構築は
+    # 行わず、型変換のみ行う。
+    #
+
+    follow_ups = []
+
+    for follow_up in result.get(
+        "follow_ups",
+        []
+    ):
+
+        if isinstance(
+            follow_up,
+            FollowUp
+        ):
+
+            follow_ups.append(
+                follow_up
+            )
+
+            continue
+
+        # --------------------------------------------------
+        # dict等で渡ってきた場合の後方互換
+        # --------------------------------------------------
+
+        follow_ups.append(
+
+            FollowUp(
+
+                question=follow_up.get(
+                    "question",
+                    ""
+                ),
+
+                reason=follow_up.get(
+                    "reason",
+                    ""
+                )
+
+            )
+
+        )
+
+    # ======================================================
     # Answerability
     # ======================================================
     #
@@ -407,6 +465,12 @@ async def query(
         answerability_reason=(
             answerability_reason
         ),
+
+        # --------------------------------------------------
+        # Follow-up Questions
+        # --------------------------------------------------
+
+        follow_ups=follow_ups,
 
         # --------------------------------------------------
         # システム情報

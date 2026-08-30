@@ -74,6 +74,25 @@ logger = logging.getLogger(__name__)
 class QueryService:
 
     # ======================================================
+    # __init__
+    # ======================================================
+    #
+    # QueryServiceはモジュールレベルのシングルトンとして
+    # 生成される（末尾の query_service = QueryService()）。
+    #
+    # そのため、依存するサービスのインスタンス化は
+    # __init__で一度だけ行い、ask()実行のたびに
+    # 生成し直さないようにする。
+    #
+    # ======================================================
+
+    def __init__(self):
+
+        self.learning_follow_up_service = (
+            LearningFollowUpService()
+        )
+
+    # ======================================================
     # Retrieval Fallback
     # ======================================================
 
@@ -390,7 +409,18 @@ class QueryService:
                 is_off_topic,
 
             "response_format":
-                response_format
+                response_format,
+
+            #
+            # follow_ups
+            #
+            # 回答不能・情報不足等でLLMまで到達しなかった
+            # ケースでは、Follow-up Questionsの生成対象となる
+            # answer/contextsが存在しないため、空リストとする。
+            #
+
+            "follow_ups":
+                []
 
         }
 
@@ -742,11 +772,6 @@ class QueryService:
         # FULL / PARTIALの場合はLLMへ進む。
         # NONEの場合のみ、資料を根拠とした回答を終了する。
         #
-        # 注意：
-        # 以前のバージョンではこのブロックが2回連続で
-        # 重複記述されていたが（コピー時の貼り付けミス）、
-        # 実害はなかったものの保守性を損なうため1回に統合した。
-        #
         # ==================================================
 
         gate_query = (
@@ -970,6 +995,10 @@ class QueryService:
             source_pages
         )
 
+        # ==================================================
+        # Learning Response Policy
+        # ==================================================
+
         learning_response_policy = learning_response_controller.decide(
             question=question,
             answerability_status=answerability_result.status.value,
@@ -981,8 +1010,6 @@ class QueryService:
                 learning_response_policy
             )
         )
-
-        self.learning_follow_up_service = LearningFollowUpService()
 
         # ==================================================
         # Prompt
@@ -1159,12 +1186,25 @@ class QueryService:
 
         )
 
+        # ==================================================
+        # Follow-up Questions
+        # ==================================================
+        #
+        # 回答生成が完了した後、
+        # 次に学ぶと理解しやすい概念をFollow-upとして
+        # 提示する。
+        #
+        # self.learning_follow_up_service は
+        # __init__で生成済みのインスタンスを再利用する
+        # （ask()実行のたびに再生成しない）。
+        #
+
         follow_ups = self.learning_follow_up_service.generate(
             question=question,
             answer=answer,
             contexts=contexts,
         )
-        
+
         # ==================================================
         # Conversation History
         # ==================================================
@@ -1230,7 +1270,16 @@ class QueryService:
                 is_off_topic,
 
             "response_format":
-                response_format
+                response_format,
+
+            #
+            # Follow-up Questions
+            #
+            # 次に学ぶと理解しやすい概念の提示。
+            #
+
+            "follow_ups":
+                follow_ups
 
         }
 

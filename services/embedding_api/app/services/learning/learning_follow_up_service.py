@@ -5,12 +5,27 @@ import re
 from app.models.learning.follow_up import FollowUp
 from app.services.infra.llm_service import llm_service
 
+from app.services.learning.follow_up_validation_service import (
+    FollowUpValidationService,
+)
+from app.services.retrieval.retrieval_service import RetrievalService
 
 logger = logging.getLogger(__name__)
 
 
 class LearningFollowUpService:
 
+    MAX_FOLLOW_UPS = 3
+
+    def __init__(
+        self,
+        retrieval_service: RetrievalService,
+    ):
+        self.follow_up_validation_service = (
+            FollowUpValidationService(
+                retrieval_service=retrieval_service,
+            )
+        )
     # ======================================================
     # Follow-up Questions
     # ======================================================
@@ -356,4 +371,6 @@ Markdownや説明文は不要です。
             len(follow_ups)
         )
 
-        return follow_ups
+        return self.follow_up_validation_service.validate(
+            follow_ups=follow_ups,
+        )

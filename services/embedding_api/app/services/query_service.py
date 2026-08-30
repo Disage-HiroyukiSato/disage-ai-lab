@@ -88,8 +88,8 @@ class QueryService:
 
     def __init__(self):
 
-        self.learning_follow_up_service = (
-            LearningFollowUpService()
+        self.learning_follow_up_service = LearningFollowUpService(
+            retrieval_service=self.retrieval_service,
         )
 
     # ======================================================

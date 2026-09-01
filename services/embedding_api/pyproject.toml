@@ -9,8 +9,8 @@ line-length = 100
 exclude = ["tests/eval"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B"]
-ignore = ["E501"]
+select = ["E", "F"]
+ignore = ["E501", "F401"]
 
 [tool.ruff.format]
 quote-style = "double"

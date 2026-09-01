@@ -112,7 +112,7 @@ class DocumentRequest(BaseModel):
 
 
 @router.post("")
-async def register(
+def register(
     request: DocumentRequest
 ):
 

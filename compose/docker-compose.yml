@@ -30,18 +30,6 @@ services:
       - ../config/auth.env
     command:
       - --http-address=0.0.0.0:4180
-      - --provider=oidc
-      - --oidc-issuer-url=${AUTHENTIK_ISSUER_URL}
-      - --client-id=${AUTHENTIK_CLIENT_ID}
-      - --client-secret=${AUTHENTIK_CLIENT_SECRET}
-      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
-      - --redirect-url=${AUTHENTIK_REDIRECT_URL}
-      - --email-domain=*
-      - --reverse-proxy=true
-      - --set-xauthrequest=true
-      - --pass-access-token=true
-      - --pass-authorization-header=true
-      - --cookie-secure=${OAUTH2_PROXY_COOKIE_SECURE:-true}
     expose:
       - "4180"
     networks:

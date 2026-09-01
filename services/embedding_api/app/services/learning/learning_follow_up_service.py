@@ -5,27 +5,12 @@ import re
 from app.models.learning.follow_up import FollowUp
 from app.services.infra.llm_service import llm_service
 
-from app.services.learning.follow_up_validation_service import (
-    FollowUpValidationService,
-)
-from app.services.retrieval.retrieval_service import RetrievalService
 
 logger = logging.getLogger(__name__)
 
 
 class LearningFollowUpService:
 
-    MAX_FOLLOW_UPS = 3
-
-    def __init__(
-        self,
-        retrieval_service: RetrievalService,
-    ):
-        self.follow_up_validation_service = (
-            FollowUpValidationService(
-                retrieval_service=retrieval_service,
-            )
-        )
     # ======================================================
     # Follow-up Questions
     # ======================================================
@@ -59,6 +44,32 @@ class LearningFollowUpService:
     MAX_FOLLOW_UPS = 3
 
     # ======================================================
+    # Context制限
+    # ======================================================
+    #
+    # llama-rewriterはQuery RewritingやAnswerability Gate
+    # 用の軽量・小コンテキストモデルであり、メイン回答生成用の
+    # llama-cppよりコンテキスト長が小さい
+    # （config/rag.env の LLM_REWRITER_CONTEXT_SIZE を参照）。
+    #
+    # answerability_gate_service.pyがTOP_N=5件に絞って
+    # プロンプトへ渡しているのと同様、Follow-up生成でも
+    # contextsをそのまま全件・全文渡さず、件数と
+    # 1件あたりの文字数を制限してからプロンプトへ
+    # 組み込む。
+    #
+    # これを怠ると、資料件数・長さによっては
+    # rewriter側のコンテキスト長を超過し、
+    # llama.cpp側が400 Bad Requestを返す
+    # （実際に発生した障害）。
+    #
+    # ======================================================
+
+    MAX_CONTEXT_ITEMS = 3
+
+    MAX_CONTEXT_CHARS_PER_ITEM = 400
+
+    # ======================================================
     # JSON抽出
     # ======================================================
     #
@@ -74,6 +85,45 @@ class LearningFollowUpService:
     )
 
     # ======================================================
+    # Context整形
+    # ======================================================
+    #
+    # 件数を MAX_CONTEXT_ITEMS 件までに絞り、
+    # 各contextを MAX_CONTEXT_CHARS_PER_ITEM 文字までに
+    # 切り詰める。
+    #
+    # 資料本文の先頭部分を優先する
+    # （Rerankerで上位に来たものほど関連度が高いため、
+    # contextsは既に関連度順であることを前提とする）。
+    #
+    # ======================================================
+
+    def _trim_contexts(
+        self,
+        contexts: list[str],
+    ) -> list[str]:
+
+        trimmed: list[str] = []
+
+        for context in contexts[: self.MAX_CONTEXT_ITEMS]:
+
+            text = str(context or "").strip()
+
+            if not text:
+                continue
+
+            if len(text) > self.MAX_CONTEXT_CHARS_PER_ITEM:
+
+                text = (
+                    text[: self.MAX_CONTEXT_CHARS_PER_ITEM]
+                    + "…"
+                )
+
+            trimmed.append(text)
+
+        return trimmed
+
+    # ======================================================
     # Prompt
     # ======================================================
 
@@ -84,12 +134,16 @@ class LearningFollowUpService:
         contexts: list[str],
     ) -> str:
 
+        trimmed_contexts = self._trim_contexts(
+            contexts
+        )
+
         joined_contexts = "\n\n".join(
 
             f"[資料{index}]\n{context}"
 
             for index, context in enumerate(
-                contexts,
+                trimmed_contexts,
                 start=1
             )
 
@@ -157,7 +211,7 @@ Follow-upとして抽出してください。
 
 # 資料
 
-{joined_contexts if contexts else "資料なし"}
+{joined_contexts if trimmed_contexts else "資料なし"}
 
 # 質問
 
@@ -371,6 +425,4 @@ Markdownや説明文は不要です。
             len(follow_ups)
         )
 
-        return self.follow_up_validation_service.validate(
-            follow_ups=follow_ups,
-        )
+        return follow_ups

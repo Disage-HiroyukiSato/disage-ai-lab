@@ -88,8 +88,8 @@ class QueryService:
 
     def __init__(self):
 
-        self.learning_follow_up_service = LearningFollowUpService(
-            retrieval_service=multi_query_retrieval_service,
+        self.learning_follow_up_service = (
+            LearningFollowUpService()
         )
 
     # ======================================================
@@ -1012,6 +1012,22 @@ class QueryService:
         )
 
         # ==================================================
+        # Answer Level
+        # ==================================================
+        #
+        # LearningResponseControllerが決定した
+        # answer_level（LearningAnswerLevel Enum）を
+        # PromptBuilderへ渡す。
+        #
+        # PromptBuilder側ではresponse_formatとは独立に
+        # 回答の分量を制御する。
+        #
+
+        answer_level = (
+            learning_response_policy.answer_level.value
+        )
+
+        # ==================================================
         # Prompt
         # ==================================================
         #
@@ -1048,7 +1064,9 @@ class QueryService:
 
                 source_pages=source_pages,
 
-                learning_response_instruction=learning_response_instruction
+                learning_response_instruction=learning_response_instruction,
+
+                answer_level=answer_level
 
             )
         )

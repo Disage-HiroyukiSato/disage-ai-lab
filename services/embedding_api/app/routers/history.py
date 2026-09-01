@@ -35,7 +35,7 @@ router = APIRouter(
 
 )
 
-async def get_sessions(
+def get_sessions(
 
     student_id: str = Query(
 
@@ -80,7 +80,7 @@ async def get_sessions(
 
 )
 
-async def get_session_detail(
+def get_session_detail(
 
     session_id: str
 

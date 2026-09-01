@@ -450,3 +450,11 @@ coverage/
 *.generated.md
 *.generated.html
 *.generated.json
+
+# Runtime configuration containing credentials
+config/auth.env
+config/database.env
+
+# Local AI data and models
+data/
+models/

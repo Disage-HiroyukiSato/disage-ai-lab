@@ -1,28 +1,51 @@
-name: ${COMPOSE_PROJECT_NAME}
+name: ${COMPOSE_PROJECT_NAME:-disage-ai}
 
 services:
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_PORT:-8088}:8080"
+    volumes:
+      - ../gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      oauth2-proxy:
+        condition: service_started
+      embedding-api:
+        condition: service_healthy
+    networks:
+      - edge
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
 
-  ########################################################
-  # メインLLM (llama.cpp)
-  ########################################################
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    restart: unless-stopped
+    env_file:
+      - ../config/auth.env
+    command:
+      - --http-address=0.0.0.0:4180
+    expose:
+      - "4180"
+    networks:
+      - edge
+    security_opt:
+      - no-new-privileges:true
 
   llama-cpp:
-
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
-
-    container_name: ${LLM_CONTAINER_NAME}
-
     restart: unless-stopped
-
     env_file:
       - ../config/app.env
-
-    ports:
-      - "${LLAMA_PORT}:8080"
-
+    expose:
+      - "8080"
     volumes:
-      - ../models:/models
-
+      - ../models:/models:ro
     command:
       - -m
       - /models/llm/${LLM_MODEL}
@@ -52,23 +75,13 @@ services:
       - 0.0.0.0
       - --port
       - "8080"
-
     healthcheck:
-      test:
-        [
-          "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "http://localhost:8080/health"
-        ]
-      interval: 120s
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
       timeout: 10s
       retries: 20
       start_period: 360s
-
     stop_grace_period: 60s
-
     deploy:
       resources:
         reservations:
@@ -76,200 +89,103 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
     networks:
-      - ai-network
+      - backend
 
-  ########################################################
-  # LLM : Query Rewriting用（軽量モデル）
-  ########################################################
-  #
-  # Phase17 : マルチターン対話のQuery Rewriting専用。
-  #
-  # メイン回答生成用のllama-cppとは別コンテナで、
-  # 軽量モデル（例: Qwen2.5-1.5B-Instruct）を常時起動する。
-  #
-  # GPU環境の場合は LLM_REWRITER_GPU_LAYER を .env で
-  # 999等に変更し、下記の deploy セクションのコメントを
-  # 解除してください。CPU環境ではそのままで動作します。
-  #
- 
   llama-rewriter:
- 
     image: ${LLM_REWRITER_IMAGE}
- 
-    container_name: ${LLM_REWRITER_CONTAINER_NAME}
- 
     restart: unless-stopped
- 
-    ports:
-      - "${LLAMA_REWRITER_PORT}:8080"
- 
+    expose:
+      - "8080"
     volumes:
-      - ../models:/models
- 
+      - ../models:/models:ro
     environment:
-      - LLAMA_ARG_MODEL=/models/llm/${LLM_REWRITER_MODEL}
-      - LLAMA_ARG_CTX_SIZE=${LLM_REWRITER_CONTEXT_SIZE}
-      - LLAMA_ARG_N_GPU_LAYERS=${LLM_REWRITER_GPU_LAYER}
-      - LLAMA_ARG_HOST=0.0.0.0
-      - LLAMA_ARG_PORT=8080
- 
-    # GPU環境の場合はコメントを解除してください
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
- 
+      LLAMA_ARG_MODEL: /models/llm/${LLM_REWRITER_MODEL}
+      LLAMA_ARG_CTX_SIZE: ${LLM_REWRITER_CONTEXT_SIZE}
+      LLAMA_ARG_N_GPU_LAYERS: ${LLM_REWRITER_GPU_LAYER}
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
     healthcheck:
-      test:
-        [
-          "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "http://localhost:8080/health"
-        ]
-      interval: 120s
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
       timeout: 10s
       retries: 20
       start_period: 120s
- 
     stop_grace_period: 60s
- 
     networks:
-      - ai-network
-
-  ########################################################
-  # ChromaDB
-  ########################################################
+      - backend
 
   chromadb:
-
     image: chromadb/chroma:1.0.15
-
-    container_name: ${CHROMA_CONTAINER_NAME}
-
     restart: unless-stopped
-
-    ports:
-      - "${CHROMA_PORT}:8000"
-
+    expose:
+      - "8000"
     volumes:
-      - ../data/chromadb:/data
-
+      - chromadb-data:/data
     networks:
-      - ai-network
-
-  ########################################################
-  # Redis (Search Cache)
-  ########################################################
+      - backend
 
   redis:
-
     image: redis:7.4-alpine
-
-    container_name: ${REDIS_CONTAINER_NAME}
-
     restart: unless-stopped
-
-    ports:
-      - "${REDIS_PORT}:6379"
-
+    expose:
+      - "6379"
     volumes:
-      - ../data/redis:/data
-
+      - redis-data:/data
     command:
       - redis-server
       - --appendonly
       - "yes"
       - --maxmemory
-      - "${REDIS_MAXMEMORY}"
+      - "${REDIS_MAXMEMORY:-512mb}"
       - --maxmemory-policy
       - allkeys-lru
-
     healthcheck:
-      test:
-        [
-          "CMD",
-          "redis-cli",
-          "ping"
-        ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 10s
-
     networks:
-      - ai-network
-
-  ########################################################
-  # PostgreSQL (Phase17 : 進捗管理・会話履歴)
-  ########################################################
+      - backend
+    security_opt:
+      - no-new-privileges:true
 
   postgres:
-
     image: postgres:16-alpine
-
-    container_name: ${POSTGRES_CONTAINER_NAME}
-
     restart: unless-stopped
-
     env_file:
       - ../config/database.env
-
-    ports:
-      - "${POSTGRES_PORT}:5432"
-
+    expose:
+      - "5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ../db/init:/docker-entrypoint-initdb.d:ro
-
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"
-        ]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 10s
-
     networks:
-      - ai-network
-
-  ########################################################
-  # Embedding API
-  ########################################################
+      - backend
+    security_opt:
+      - no-new-privileges:true
 
   embedding-api:
-
     build:
       context: ../services/embedding_api
       dockerfile: Dockerfile
-
-    container_name: ${EMBEDDING_CONTAINER_NAME}
-
     restart: unless-stopped
-
     env_file:
       - ../config/app.env
       - ../config/rag.env
       - ../config/database.env
-
     volumes:
       - ../config:/app/config:ro
       - ../models:/models:ro
-      - ../data/bm25:/app/data/bm25
+      - bm25-data:/app/data/bm25
+      - search-log-data:/app/data/search_log
       - ../data/documents:/app/data/documents:ro
-
-    ports:
-      - "${EMBEDDING_PORT}:8010"
-
+    expose:
+      - "8010"
     depends_on:
       chromadb:
         condition: service_started
@@ -277,94 +193,33 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-
     healthcheck:
-
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"
-        ]
-
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
       interval: 30s
-
       timeout: 10s
-
       retries: 20
-
       start_period: 120s
-
+    stop_grace_period: 60s
     networks:
-      - ai-network
-
-  ########################################################
-  # RAG API
-  ########################################################
-
-  rag-api:
-
-    build:
-      context: ../services/rag_api
-
-    container_name: ${RAG_CONTAINER_NAME}
-
-    restart: unless-stopped
-
-    env_file:
-      - ../config/app.env
-      - ../config/rag.env
-
-    volumes:
-      - ../config:/app/config:ro
-
-    ports:
-      - "${RAG_API_PORT}:8000"
-
-    depends_on:
-      llama-cpp:
-        condition: service_healthy
-      chromadb:
-        condition: service_started
-      embedding-api:
-        condition: service_healthy
-
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-    networks:
-      - ai-network
-
-########################################################
-# Volumes
-########################################################
+      - backend
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
-
   chromadb-data:
-    name: ${CHROMA_VOLUME}
-
+    name: ${CHROMA_VOLUME:-disage-ai-chromadb}
+  redis-data:
+    name: ${REDIS_VOLUME:-disage-ai-redis}
   postgres-data:
-    name: ${POSTGRES_VOLUME}
-
-
-########################################################
-# Networks
-########################################################
+    name: ${POSTGRES_VOLUME:-disage-ai-postgres}
+  bm25-data:
+    name: ${BM25_VOLUME:-disage-ai-bm25}
+  search-log-data:
+    name: ${SEARCH_LOG_VOLUME:-disage-ai-search-log}
 
 networks:
-
-  ai-network:
-    name: ${DOCKER_NETWORK}
-    driver: bridge
+  edge:
+    name: ${DOCKER_EDGE_NETWORK:-disage-ai-edge}
+  backend:
+    name: ${DOCKER_NETWORK:-disage-ai-backend}
+    internal: true

@@ -26,7 +26,7 @@ class EmbeddingRequest(BaseModel):
 
 @router.post("")
 
-async def embedding(
+def embedding(
 
     request: EmbeddingRequest
 

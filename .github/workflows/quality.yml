@@ -1,0 +1,64 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/embedding_api/requirements-test.txt
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff==0.12.9 pip-audit==2.9.0
+      - name: Ruff
+        run: ruff check services/embedding_api
+      - name: Dependency audit (baseline report)
+        continue-on-error: true
+        run: pip-audit -r services/embedding_api/requirements.txt
+      - name: Validate Compose interpolation
+        run: |
+          cp .env.example .env
+          cp config/database.env.example config/database.env
+          cp config/auth.env.example config/auth.env
+          docker compose --env-file .env -f compose/docker-compose.yml config --quiet
+          docker compose --env-file .env -f compose/docker-compose-test.yml config --quiet
+      - name: Detect committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile application
+        run: python -m compileall -q services/embedding_api/app
+
+  dockerfile-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: services/embedding_api/Dockerfile

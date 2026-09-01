@@ -1,64 +1,82 @@
-﻿name: ${COMPOSE_PROJECT_NAME}-test
+name: ${COMPOSE_PROJECT_NAME:-disage-ai}-test
 
 services:
+  chromadb-test:
+    image: chromadb/chroma:1.0.15
+    expose:
+      - "8000"
+    volumes:
+      - chromadb-test-data:/data
+    networks:
+      - test-network
 
-  ########################################################
-  # Embedding API Test
-  ########################################################
+  redis-test:
+    image: redis:7.4-alpine
+    expose:
+      - "6379"
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: disage_ai_test
+      POSTGRES_USER: disage_test
+      POSTGRES_PASSWORD: test_only_password
+    expose:
+      - "5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U disage_test -d disage_ai_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
 
   embedding-api-test:
-
     build:
-      context: ..
-      dockerfile: services/embedding_api/Dockerfile.test
-
-    container_name: ${EMBEDDING_CONTAINER_NAME}-test
-
+      context: ../services/embedding_api
+      dockerfile: Dockerfile.test
+    environment:
+      CHROMA_HOST: chromadb-test
+      CHROMA_PORT: "8000"
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT_INTERNAL: "5432"
+      POSTGRES_DB: disage_ai_test
+      POSTGRES_USER: disage_test
+      POSTGRES_PASSWORD: test_only_password
+      REDIS_HOST: redis-test
+      REDIS_PORT: "6379"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     env_file:
       - ../config/app.env
       - ../config/rag.env
-
     volumes:
       - ../config:/app/config:ro
       - ../services/embedding_api/tests:/app/tests:ro
       - ../models:/models:ro
-
     depends_on:
-      chromadb:
+      chromadb-test:
         condition: service_started
-
+      redis-test:
+        condition: service_healthy
+      postgres-test:
+        condition: service_healthy
     networks:
-      - ai-network
+      - test-network
+    command: ["pytest", "-v", "--maxfail=1", "/app/tests"]
 
-    command:
-      - pytest
-      - -v
-      - /app/tests
-
-  ########################################################
-  # ChromaDB
-  ########################################################
-
-  chromadb:
-
-    image: chromadb/chroma:1.0.15
-
-    container_name: ${CHROMA_CONTAINER_NAME}-test
-
-    volumes:
-      - ../data/chromadb:/data
-
-    networks:
-      - ai-network
-
-########################################################
-# Networks
-########################################################
+volumes:
+  chromadb-test-data:
 
 networks:
-
-  ai-network:
-
-    name: ${DOCKER_NETWORK}-test
-
-    driver: bridge
+  test-network:
+    internal: true

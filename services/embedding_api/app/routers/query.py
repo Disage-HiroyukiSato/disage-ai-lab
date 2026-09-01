@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from pydantic import BaseModel
+from pydantic import Field
 
 from app.config import settings
 
@@ -40,9 +41,9 @@ router = APIRouter(
 
 class QueryRequest(BaseModel):
 
-    question: str
+    question: str = Field(min_length=1, max_length=4000)
 
-    limit: int = settings.default_limit
+    limit: int = Field(default=settings.default_limit, ge=1, le=20)
 
     # ======================================================
     # Phase17 : 研修用AIアシスタント
@@ -57,7 +58,7 @@ class QueryRequest(BaseModel):
     #
     # ======================================================
 
-    student_id: str | None = None
+    student_id: str | None = Field(default=None, max_length=128)
 
     # ======================================================
     # session_id
@@ -70,14 +71,14 @@ class QueryRequest(BaseModel):
     #
     # ======================================================
 
-    session_id: str | None = None
+    session_id: str | None = Field(default=None, max_length=128)
 
 
 @router.post(
     "",
     response_model=QueryResponse
 )
-async def query(
+def query(
     request: QueryRequest
 ):
 

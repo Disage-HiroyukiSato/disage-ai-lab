@@ -18,7 +18,7 @@ router = APIRouter(
 
 @router.post("")
 
-async def retrieval(
+def retrieval(
 
     request: RetrievalRequest
 

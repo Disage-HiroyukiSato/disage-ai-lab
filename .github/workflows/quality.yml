@@ -32,8 +32,8 @@ jobs:
           cp .env.example .env
           cp config/database.env.example config/database.env
           cp config/auth.env.example config/auth.env
-          docker compose -f compose/docker-compose.yml config --quiet
-          docker compose -f compose/docker-compose-test.yml config --quiet
+          docker compose --env-file .env -f compose/docker-compose.yml config --quiet
+          docker compose --env-file .env -f compose/docker-compose-test.yml config --quiet
       - name: Detect committed secrets
         uses: gitleaks/gitleaks-action@v2
         env:

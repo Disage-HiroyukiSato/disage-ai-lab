@@ -11,11 +11,34 @@ services:
     depends_on:
       oauth2-proxy:
         condition: service_started
+      ui:
+        condition: service_healthy
       embedding-api:
         condition: service_healthy
     networks:
       - edge
       - backend
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+
+  ui:
+    build:
+      context: ../services/ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - edge
     security_opt:
       - no-new-privileges:true
     read_only: true

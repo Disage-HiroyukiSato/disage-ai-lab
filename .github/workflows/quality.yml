@@ -62,3 +62,6 @@ jobs:
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: services/embedding_api/Dockerfile
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: services/ui/Dockerfile

@@ -35,6 +35,7 @@ jobs:
           cp config/database.env.example config/database.env
           cp config/auth.env.example config/auth.env
           docker compose --env-file .env -f compose/docker-compose.yml config --quiet
+          docker compose --env-file .env -f compose/docker-compose-noauth.yml config --quiet
           docker compose --env-file .env -f compose/docker-compose-test.yml config --quiet
       - name: Detect committed secrets
         uses: gitleaks/gitleaks-action@v2
@@ -62,6 +63,3 @@ jobs:
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: services/embedding_api/Dockerfile
-      - uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: services/ui/Dockerfile

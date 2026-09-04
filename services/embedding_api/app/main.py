@@ -1,8 +1,6 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from app.core.handlers import (
     disage_exception_handler,
@@ -19,12 +17,7 @@ from app.routers.document import router as document_router
 from app.routers.retrieval import router as retrieval_router
 from app.routers.query import router as query_router
 from app.routers.history import router as history_router
-from app.routers.web import router as web_router
 from app.core.logging_config import setup_logging
-
-from pathlib import Path
-
-BASE_DIR = Path(__file__).resolve().parent
 
 setup_logging()
 
@@ -105,31 +98,5 @@ app.include_router(
 app.include_router(
 
     history_router
-
-)
-
-app.mount(
-
-    "/static",
-
-    StaticFiles(
-
-        directory=BASE_DIR / "static"
-
-    ),
-
-    name="static"
-
-)
-
-templates = Jinja2Templates(
-
-    directory=BASE_DIR / "templates"
-
-)
-
-app.include_router(
-
-    web_router
 
 )

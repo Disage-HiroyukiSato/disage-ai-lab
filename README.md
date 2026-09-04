@@ -11,9 +11,28 @@
 - ChromaDB: ベクトル索引
 - PostgreSQL: 会話・進捗・文書管理
 - Redis: 検索キャッシュ
+- Nginx UI: HTML、CSS、JavaScriptの配信
 - Nginx + oauth2-proxy: Authentik OIDC Gateway
 
 旧 `rag-api` はRAG処理を持たない透過プロキシだったため廃止しています。公開入口はGatewayだけです。
+Web UIは `embedding-api` から分離され、独立した `ui` コンテナで配信します。
+
+## UIとAPIの分離
+
+- `services/embedding_api`: JSON API専用。HTMLや静的ファイルを配信しません。
+- `services/ui`: Web UI専用。バックエンド処理やデータストアへ直接接続しません。
+- `gateway`: Authentik認証後、画面を `ui`、APIを `embedding-api` へ振り分けます。
+
+ブラウザはGatewayだけへアクセスし、UIからAPIへのリクエストは同一オリジンの相対URLを使用します。UIコンテナとAPIコンテナをホストへ直接公開しないでください。
+
+現在の主なルーティングは次のとおりです。
+
+| パス | 転送先 |
+| --- | --- |
+| `/`, `/documents-ui`, `/query-ui`, `/history-ui`, `/static/*` | `ui` |
+| `/embedding`, `/documents/*`, `/query`, `/history/*`, `/retrieval` | `embedding-api` |
+| `/health`, `/ready`, `/docs`, `/redoc`, `/openapi.json` | `embedding-api` |
+| `/oauth2/*` | `oauth2-proxy` |
 
 ## 必要条件
 
@@ -66,6 +85,12 @@ pytest services/embedding_api/tests
 ```
 
 CIではCompose検証、Ruff、pytest、依存関係監査、Dockerfile検査、秘密情報検査を実行します。
+
+UIコンテナだけを再ビルドする場合は、次を実行します。
+
+```bash
+docker compose -f compose/docker-compose.yml up -d --build ui gateway
+```
 
 ## セキュリティ原則
 

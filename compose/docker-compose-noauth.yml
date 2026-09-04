@@ -7,10 +7,8 @@ services:
     ports:
       - "${GATEWAY_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_PORT:-8088}:8080"
     volumes:
-      - ../gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../gateway/nginx.noauth.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      oauth2-proxy:
-        condition: service_started
       embedding-api:
         condition: service_healthy
     networks:
@@ -22,20 +20,6 @@ services:
     tmpfs:
       - /var/cache/nginx
       - /var/run
-
-  oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
-    restart: unless-stopped
-    env_file:
-      - ../config/auth.env
-    command:
-      - --http-address=0.0.0.0:4180
-    expose:
-      - "4180"
-    networks:
-      - edge
-    security_opt:
-      - no-new-privileges:true
 
   llama-cpp:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda

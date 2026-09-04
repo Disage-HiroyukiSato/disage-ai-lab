@@ -1,0 +1,209 @@
+name: ${COMPOSE_PROJECT_NAME:-disage-ai}
+
+services:
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_PORT:-8088}:8080"
+    volumes:
+      - ../gateway/nginx.noauth.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      embedding-api:
+        condition: service_healthy
+    networks:
+      - edge
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+
+  llama-cpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    restart: unless-stopped
+    env_file:
+      - ../config/app.env
+    expose:
+      - "8080"
+    volumes:
+      - ../models:/models:ro
+    command:
+      - -m
+      - /models/llm/${LLM_MODEL}
+      - -c
+      - "${CONTEXT_SIZE}"
+      - -t
+      - "${THREAD_COUNT}"
+      - -ngl
+      - "${GPU_LAYER}"
+      - -np
+      - "1"
+      - -b
+      - "2048"
+      - -ub
+      - "512"
+      - -fa
+      - "on"
+      - --temp
+      - "${TEMPERATURE}"
+      - --top-p
+      - "${TOP_P}"
+      - --repeat-penalty
+      - "${REPEAT_PENALTY}"
+      - --chat-template
+      - chatml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 360s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - backend
+
+  llama-rewriter:
+    image: ${LLM_REWRITER_IMAGE}
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - ../models:/models:ro
+    environment:
+      LLAMA_ARG_MODEL: /models/llm/${LLM_REWRITER_MODEL}
+      LLAMA_ARG_CTX_SIZE: ${LLM_REWRITER_CONTEXT_SIZE}
+      LLAMA_ARG_N_GPU_LAYERS: ${LLM_REWRITER_GPU_LAYER}
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    stop_grace_period: 60s
+    networks:
+      - backend
+
+  chromadb:
+    image: chromadb/chroma:1.0.15
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      - chromadb-data:/data
+    networks:
+      - backend
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "${REDIS_MAXMEMORY:-512mb}"
+      - --maxmemory-policy
+      - allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - ../config/database.env
+    expose:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+
+  embedding-api:
+    build:
+      context: ../services/embedding_api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../config/app.env
+      - ../config/rag.env
+      - ../config/database.env
+    volumes:
+      - ../config:/app/config:ro
+      - ../models:/models:ro
+      - bm25-data:/app/data/bm25
+      - search-log-data:/app/data/search_log
+      - ../data/documents:/app/data/documents:ro
+    expose:
+      - "8010"
+    depends_on:
+      chromadb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    stop_grace_period: 60s
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  chromadb-data:
+    name: ${CHROMA_VOLUME:-disage-ai-chromadb}
+  redis-data:
+    name: ${REDIS_VOLUME:-disage-ai-redis}
+  postgres-data:
+    name: ${POSTGRES_VOLUME:-disage-ai-postgres}
+  bm25-data:
+    name: ${BM25_VOLUME:-disage-ai-bm25}
+  search-log-data:
+    name: ${SEARCH_LOG_VOLUME:-disage-ai-search-log}
+
+networks:
+  edge:
+    name: ${DOCKER_EDGE_NETWORK:-disage-ai-edge}
+  backend:
+    name: ${DOCKER_NETWORK:-disage-ai-backend}
+    internal: true

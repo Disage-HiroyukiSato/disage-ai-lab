@@ -16,6 +16,7 @@ from app.routers.embedding import router as embedding_router
 from app.routers.document import router as document_router
 from app.routers.retrieval import router as retrieval_router
 from app.routers.query import router as query_router
+from app.routers.query_stream import router as query_stream_router
 from app.routers.history import router as history_router
 from app.core.logging_config import setup_logging
 
@@ -92,6 +93,12 @@ app.include_router(
 app.include_router(
 
     query_router
+
+)
+
+app.include_router(
+
+    query_stream_router
 
 )
 

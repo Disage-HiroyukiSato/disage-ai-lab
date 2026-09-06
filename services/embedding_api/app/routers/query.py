@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
+from app.services.infra.query_stream import ndjson_events
 
 from pydantic import BaseModel
 from pydantic import Field
@@ -98,6 +100,10 @@ def query(
 
     )
 
+    return build_query_response(result)
+
+
+def build_query_response(result):
     # ======================================================
     # Metadata
     # ======================================================
@@ -479,4 +485,20 @@ def query(
 
         metadata=metadata
 
+    )
+
+@router.post("/stream", response_class=StreamingResponse)
+async def query_stream(request: QueryRequest, http_request: Request):
+    return StreamingResponse(
+        ndjson_events(
+            lambda cancelled: query_service.stream(
+                request.question, request.limit,
+                request.student_id, request.session_id,
+                cancelled=cancelled,
+            ),
+            build_query_response,
+            http_request,
+        ),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

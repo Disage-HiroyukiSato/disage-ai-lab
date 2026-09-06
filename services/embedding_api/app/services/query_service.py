@@ -444,14 +444,46 @@ class QueryService:
     # Main Query
     # ======================================================
 
-    def ask(
+    def ask(self, question, limit=5, student_id=None, session_id=None):
+        events = self._run(question, limit, student_id, session_id)
+        while True:
+            try:
+                next(events)
+            except StopIteration as finished:
+                return finished.value
+
+    def stream(self, question, limit=5, student_id=None, session_id=None,
+               cancelled=None):
+        events = self._run(question, limit, student_id, session_id,
+                           streaming=True, cancelled=cancelled)
+        try:
+            while True:
+                try:
+                    event = next(events)
+                except StopIteration as finished:
+                    if cancelled is None or not cancelled.is_set():
+                        yield {"type": "result", "result": finished.value}
+                    return
+                yield event
+        finally:
+            events.close()
+
+    def _run(
         self,
         question: str,
         limit: int = 5,
         student_id: str | None = None,
-        session_id: str | None = None
+        session_id: str | None = None,
+        streaming: bool = False,
+        cancelled=None,
     ):
 
+        def checkpoint(stage):
+            if cancelled is not None and cancelled.is_set():
+                raise GeneratorExit()
+            return {"type": "status", "stage": stage}
+
+        yield checkpoint("analysis")
         overall_start = (
             time.perf_counter()
         )
@@ -637,6 +669,7 @@ class QueryService:
         # Retrieval
         # ==================================================
 
+        yield checkpoint("retrieval")
         retrieval_start = (
             time.perf_counter()
         )
@@ -780,6 +813,7 @@ class QueryService:
             else knowledge_query
         )
 
+        yield checkpoint("answerability")
         gate_start = (
             time.perf_counter()
         )
@@ -1075,15 +1109,24 @@ class QueryService:
         # LLM
         # ==================================================
 
+        yield checkpoint("generation")
         llm_start = (
             time.perf_counter()
         )
 
-        answer = (
-            llm_service.ask(
-                prompt
-            )
-        )
+        if streaming:
+            parts = []
+            with llm_service.stream(prompt) as tokens:
+                for token in tokens:
+                    if cancelled is not None and cancelled.is_set():
+                        raise GeneratorExit()
+                    parts.append(token)
+                    yield {"type": "token", "text": token}
+            answer = "".join(parts)
+        else:
+            answer = llm_service.ask(prompt)
+        if cancelled is not None and cancelled.is_set():
+            raise GeneratorExit()
 
         llm_elapsed = int(
             (
@@ -1230,6 +1273,9 @@ class QueryService:
         # LLMによる回答生成が正常に完了した場合のみ、
         # 今回の質問・回答を会話履歴へ追加する。
         #
+
+        if cancelled is not None and cancelled.is_set():
+            raise GeneratorExit()
 
         conversation_service.append(
 

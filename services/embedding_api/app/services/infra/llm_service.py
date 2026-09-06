@@ -1,5 +1,7 @@
 import json
 import logging
+import json
+from contextlib import contextmanager
 
 import requests
 
@@ -8,9 +10,78 @@ from app.core.exceptions import LLMException
 
 logger = logging.getLogger(__name__)
 
-
 class LlmService:
+    @staticmethod
+    def _read_tokens(response):
+        """Parse llama.cpp /completion SSE; never accept a truncated answer."""
+        data_lines = []
+        for line in response.iter_lines(chunk_size=1, decode_unicode=False):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+                continue
+            if line != "" or not data_lines:
+                continue
+            raw = "\n".join(data_lines)
+            data_lines.clear()
+            if raw == "[DONE]":
+                return
+            event = json.loads(raw)
+            if event.get("error"):
+                raise LLMException("Upstream generation failed")
+            content = event.get("content", "")
+            if not isinstance(content, str):
+                raise LLMException("Invalid upstream content")
+            if content:
+                yield content
+            if event.get("stop"):
+                return
+        raise LLMException("Upstream stream ended without a terminal event")
 
+    @contextmanager
+    def stream(self, prompt):
+        # Retain the existing raw completion API, ChatML and sampling settings.
+        with requests.post(
+            f"{settings.llm_url}/completion",
+            json={
+                "prompt": self._wrap_chatml(prompt),
+                "n_predict": settings.max_tokens,
+                "temperature": settings.temperature,
+                "top_p": settings.top_p,
+                "repeat_penalty": settings.repeat_penalty,
+                "stop": ["</s>", "<|im_end|>", "<|im_start|>"],
+                "stream": True,
+            },
+            stream=True,
+            timeout=(10, 60),
+        ) as response:
+            response.raise_for_status()
+            yield self._read_tokens(response)
+
+    # ======================================================
+    # Chat Template (chatml)
+    # ======================================================
+    #
+    # llama-cppは --chat-template chatml で起動しているが、
+    # ask()はllama.cppの/completion（raw補完API）を
+    # 直接叩いているため、chatml形式のプロンプトへ
+    # 明示的にラップしないと、モデルが
+    # 会話の終端（<|im_end|>）を認識できない。
+    #
+    # 終端を認識できないと、stop=["</s>", "<|im_end|>"]が
+    # 一度も出現せず、n_predict上限まで生成が続き、
+    # 結果として同じ内容を繰り返す不具合が発生する
+    # （実際に発生した障害）。
+    #
+    # /v1/chat/completions（OpenAI互換API）を使えば
+    # サーバー側がテンプレートを適用してくれるが、
+    # 既存の/completion運用・タイムアウト設計を
+    # 変更しないため、ここでプロンプト側を
+    # chatml形式に整形する。
+    #
+    # ======================================================
     SYSTEM_PROMPT = (
         "あなたはJava研修受講生向けのAI学習アシスタントです。"
     )

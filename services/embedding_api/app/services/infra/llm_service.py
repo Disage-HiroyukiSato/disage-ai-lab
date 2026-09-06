@@ -1,5 +1,7 @@
 import requests
 import logging
+import json
+from contextlib import contextmanager
 
 from app.config import settings
 from app.core.exceptions import LLMException
@@ -7,6 +9,55 @@ from app.core.exceptions import LLMException
 logger = logging.getLogger(__name__)
 
 class LlmService:
+
+    @staticmethod
+    def _read_tokens(response):
+        """Parse llama.cpp /completion SSE; never accept a truncated answer."""
+        data_lines = []
+        for line in response.iter_lines(chunk_size=1, decode_unicode=False):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+                continue
+            if line != "" or not data_lines:
+                continue
+            raw = "\n".join(data_lines)
+            data_lines.clear()
+            if raw == "[DONE]":
+                return
+            event = json.loads(raw)
+            if event.get("error"):
+                raise LLMException("Upstream generation failed")
+            content = event.get("content", "")
+            if not isinstance(content, str):
+                raise LLMException("Invalid upstream content")
+            if content:
+                yield content
+            if event.get("stop"):
+                return
+        raise LLMException("Upstream stream ended without a terminal event")
+
+    @contextmanager
+    def stream(self, prompt):
+        # Retain the existing raw completion API, ChatML and sampling settings.
+        with requests.post(
+            f"{settings.llm_url}/completion",
+            json={
+                "prompt": self._wrap_chatml(prompt),
+                "n_predict": settings.max_tokens,
+                "temperature": settings.temperature,
+                "top_p": settings.top_p,
+                "repeat_penalty": settings.repeat_penalty,
+                "stop": ["</s>", "<|im_end|>", "<|im_start|>"],
+                "stream": True,
+            },
+            stream=True,
+            timeout=(10, 60),
+        ) as response:
+            response.raise_for_status()
+            yield self._read_tokens(response)
 
     # ======================================================
     # Chat Template (chatml)
